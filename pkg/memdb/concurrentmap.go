@@ -1,8 +1,9 @@
 package memdb
 
 import (
-	"github.com/hsn/tiny-redis/pkg/util"
 	"sync"
+
+	"github.com/hsn/tiny-redis/pkg/util"
 
 	"github.com/emirpasic/gods/trees/redblacktree"
 )
@@ -25,6 +26,8 @@ type shard struct {
 	tree  *redblacktree.Tree // 当元素数量超过 TreeifyThreshold 时，将链表转换为红黑树
 	count int                // 当前桶中的元素数量
 	rwMu  *sync.RWMutex      // 读写锁用于并发访问控制
+
+	_ [40]byte // 缓存行填充，防止伪共享
 }
 
 // ConcurrentMap 管理一个分片表，包含多个哈希表分片，提供线程安全的操作。
