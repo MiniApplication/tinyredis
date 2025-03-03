@@ -2,10 +2,11 @@ package memdb
 
 import (
 	"fmt"
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
 	"strconv"
 	"strings"
+
+	"github.com/hsn/tiny-redis/pkg/RESP"
+	"github.com/hsn/tiny-redis/pkg/logger"
 )
 
 func RegisterHashCommands() {

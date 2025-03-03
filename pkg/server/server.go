@@ -1,11 +1,12 @@
 package server
 
 import (
-	"github.com/hsn/tiny-redis/pkg/config"
-	"github.com/hsn/tiny-redis/pkg/logger"
 	"net"
 	"strconv"
 	"sync"
+
+	"github.com/hsn/tiny-redis/pkg/config"
+	"github.com/hsn/tiny-redis/pkg/logger"
 )
 
 // Start starts a simple redis server

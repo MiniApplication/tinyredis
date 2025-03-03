@@ -2,12 +2,13 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/hsn/tiny-redis/pkg/config"
 	"github.com/hsn/tiny-redis/pkg/logger"
 	"github.com/hsn/tiny-redis/pkg/memdb"
 	"github.com/hsn/tiny-redis/pkg/server"
 	"github.com/spf13/cobra"
-	"os"
 )
 
 var rootCmd = &cobra.Command{

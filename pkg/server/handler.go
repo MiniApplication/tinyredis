@@ -1,11 +1,12 @@
 package server
 
 import (
+	"io"
+	"net"
+
 	"github.com/hsn/tiny-redis/pkg/RESP"
 	"github.com/hsn/tiny-redis/pkg/logger"
 	"github.com/hsn/tiny-redis/pkg/memdb"
-	"io"
-	"net"
 )
 
 type Handler struct {

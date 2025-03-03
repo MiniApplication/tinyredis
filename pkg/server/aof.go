@@ -1,11 +1,12 @@
 package server
 
 import (
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/hsn/tiny-redis/pkg/RESP"
+	"github.com/hsn/tiny-redis/pkg/logger"
 )
 
 const aofPath = "aof"

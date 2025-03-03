@@ -2,7 +2,6 @@ package logger
 
 import (
 	"fmt"
-	"github.com/hsn/tiny-redis/pkg/config"
 	"io"
 	"log"
 	"os"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"github.com/hsn/tiny-redis/pkg/config"
 )
 
 type LogConfig struct {

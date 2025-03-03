@@ -2,9 +2,10 @@ package memdb
 
 import (
 	"bytes"
+	"testing"
+
 	RESP2 "github.com/hsn/tiny-redis/pkg/RESP"
 	"github.com/hsn/tiny-redis/pkg/config"
-	"testing"
 )
 
 func init() {

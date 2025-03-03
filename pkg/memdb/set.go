@@ -1,11 +1,12 @@
 package memdb
 
 import (
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/hsn/tiny-redis/pkg/RESP"
+	"github.com/hsn/tiny-redis/pkg/logger"
 )
 
 func RegisterSetCommands() {

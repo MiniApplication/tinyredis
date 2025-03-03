@@ -1,10 +1,11 @@
 package memdb
 
 import (
-	"github.com/hsn/tiny-redis/pkg/logger"
-	"github.com/hsn/tiny-redis/pkg/util"
 	"sort"
 	"sync"
+
+	"github.com/hsn/tiny-redis/pkg/logger"
+	"github.com/hsn/tiny-redis/pkg/util"
 )
 
 type Locks struct {
