@@ -1,30 +1,170 @@
 package memdb
 
 import (
+	"container/heap"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/hsn/tiny-redis/pkg/RESP"
 	"github.com/hsn/tiny-redis/pkg/config"
 	"github.com/hsn/tiny-redis/pkg/logger"
-	"strings"
-	"time"
 )
+
+// TTLItem represents a key with its expiration time
+type TTLItem struct {
+	key      string
+	expireAt int64
+	index    int // 用于 heap 实现
+}
+
+// TTLHeap 是一个最小堆，用于高效管理过期键
+type TTLHeap []*TTLItem
+
+func (h TTLHeap) Len() int           { return len(h) }
+func (h TTLHeap) Less(i, j int) bool { return h[i].expireAt < h[j].expireAt }
+func (h TTLHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+
+func (h *TTLHeap) Push(x interface{}) {
+	n := len(*h)
+	item := x.(*TTLItem)
+	item.index = n
+	*h = append(*h, item)
+}
+
+func (h *TTLHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil  // 避免内存泄漏
+	item.index = -1 // 标记为已移除
+	*h = old[0 : n-1]
+	return item
+}
+
+// TTLManager 管理键的过期时间
+type TTLManager struct {
+	heap     TTLHeap
+	keyMap   map[string]*TTLItem
+	lock     sync.RWMutex
+	stopChan chan struct{}
+}
+
+func NewTTLManager() *TTLManager {
+	tm := &TTLManager{
+		heap:     make(TTLHeap, 0),
+		keyMap:   make(map[string]*TTLItem),
+		stopChan: make(chan struct{}),
+	}
+	heap.Init(&tm.heap)
+	go tm.cleanupLoop()
+	return tm
+}
+
+func (tm *TTLManager) cleanupLoop() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			tm.cleanup()
+		case <-tm.stopChan:
+			return
+		}
+	}
+}
+
+func (tm *TTLManager) cleanup() {
+	now := time.Now().Unix()
+	tm.lock.Lock()
+	defer tm.lock.Unlock()
+
+	for tm.heap.Len() > 0 {
+		item := tm.heap[0]
+		if item.expireAt > now {
+			break
+		}
+		heap.Pop(&tm.heap)
+		delete(tm.keyMap, item.key)
+	}
+}
+
+func (tm *TTLManager) SetTTL(key string, expireAt int64) {
+	tm.lock.Lock()
+	defer tm.lock.Unlock()
+
+	if item, exists := tm.keyMap[key]; exists {
+		item.expireAt = expireAt
+		heap.Fix(&tm.heap, item.index)
+	} else {
+		item := &TTLItem{
+			key:      key,
+			expireAt: expireAt,
+		}
+		heap.Push(&tm.heap, item)
+		tm.keyMap[key] = item
+	}
+}
+
+func (tm *TTLManager) CheckTTL(key string) bool {
+	tm.lock.RLock()
+	item, exists := tm.keyMap[key]
+	tm.lock.RUnlock()
+
+	if !exists {
+		return true
+	}
+
+	now := time.Now().Unix()
+	if item.expireAt > now {
+		return true
+	}
+
+	tm.lock.Lock()
+	defer tm.lock.Unlock()
+
+	// 双重检查，避免并发问题
+	if item, exists = tm.keyMap[key]; exists && item.expireAt <= now {
+		heap.Remove(&tm.heap, item.index)
+		delete(tm.keyMap, key)
+		return false
+	}
+	return true
+}
+
+func (tm *TTLManager) RemoveTTL(key string) {
+	tm.lock.Lock()
+	defer tm.lock.Unlock()
+
+	if item, exists := tm.keyMap[key]; exists {
+		heap.Remove(&tm.heap, item.index)
+		delete(tm.keyMap, key)
+	}
+}
 
 // MemDb is the memory cache database
 // All key:value pairs are stored in db
 // All ttl keys are stored in ttlKeys
 // locks is used to lock a key for db to ensure some atomic operations
 type MemDb struct {
-	db      *ConcurrentMap
-	ttlKeys *ConcurrentMap
-	locks   *Locks
+	db    *ConcurrentMap
+	ttl   *TTLManager
+	locks *Locks
 }
 
 func NewMemDb() *MemDb {
 	return &MemDb{
-		db:      NewConcurrentMap(config.Configures.ShardNum),
-		ttlKeys: NewConcurrentMap(config.Configures.ShardNum),
-		locks:   NewLocks(config.Configures.ShardNum * 2),
+		db:    NewConcurrentMap(config.Configures.ShardNum),
+		ttl:   NewTTLManager(),
+		locks: NewLocks(config.Configures.ShardNum * 2),
 	}
 }
+
 func (m *MemDb) ExecCommand(cmd [][]byte) RESP.RedisData {
 	if len(cmd) == 0 {
 		return nil
@@ -46,34 +186,28 @@ func (m *MemDb) ExecCommand(cmd [][]byte) RESP.RedisData {
 // Attention: Don't lock this function because it has called locks.Lock(key) for atomic deleting expired key.
 // Otherwise, it will cause a deadlock.
 func (m *MemDb) CheckTTL(key string) bool {
-	ttl, ok := m.ttlKeys.Get(key)
-	if !ok {
-		return true
+	if !m.ttl.CheckTTL(key) {
+		m.locks.Lock(key)
+		defer m.locks.UnLock(key)
+		m.db.Delete(key)
+		return false
 	}
-	ttlTime := ttl.(int64)
-	now := time.Now().Unix()
-	if ttlTime > now {
-		return true
-	}
-
-	m.locks.Lock(key)
-	defer m.locks.UnLock(key)
-	m.db.Delete(key)
-	m.ttlKeys.Delete(key)
-	return false
+	return true
 }
 
 // SetTTL sets ttl for keys
 // return bool to check if ttl set success
 // return int to check if the key is a new ttl key
-func (m *MemDb) SetTTL(key string, value int64) int {
+func (m *MemDb) SetTTL(key string, expireAt int64) int {
 	if _, ok := m.db.Get(key); !ok {
 		logger.Debug("SetTTL: key not exist")
 		return 0
 	}
-	m.ttlKeys.Set(key, value)
+	m.ttl.SetTTL(key, expireAt)
 	return 1
 }
+
 func (m *MemDb) DelTTL(key string) int {
-	return m.ttlKeys.Delete(key)
+	m.ttl.RemoveTTL(key)
+	return 1
 }

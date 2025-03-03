@@ -2,12 +2,13 @@ package memdb
 
 import (
 	"fmt"
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
-	"github.com/hsn/tiny-redis/pkg/util"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hsn/tiny-redis/pkg/RESP"
+	"github.com/hsn/tiny-redis/pkg/logger"
+	"github.com/hsn/tiny-redis/pkg/util"
 )
 
 // RegisterKeyCommand
@@ -53,7 +54,7 @@ func delKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	for _, key := range cmd[1:] {
 		m.locks.Lock(string(key))
 		dKeyCount += m.db.Delete(string(key))
-		m.ttlKeys.Delete(string(key))
+		m.ttl.RemoveTTL(string(key))
 		m.locks.UnLock(string(key))
 	}
 	return RESP.MakeIntData(int64(dKeyCount))
@@ -128,19 +129,19 @@ func expireKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	var res int
 	switch opt {
 	case "nx":
-		if _, ok := m.ttlKeys.Get(key); !ok {
+		if _, exists := m.ttl.keyMap[key]; !exists {
 			res = m.SetTTL(key, ttl)
 		}
 	case "xx":
-		if _, ok := m.ttlKeys.Get(key); ok {
+		if _, exists := m.ttl.keyMap[key]; exists {
 			res = m.SetTTL(key, ttl)
 		}
 	case "gt":
-		if v, ok := m.ttlKeys.Get(key); ok && ttl > v.(int64) {
+		if item, exists := m.ttl.keyMap[key]; exists && ttl > item.expireAt {
 			res = m.SetTTL(key, ttl)
 		}
 	case "lt":
-		if v, ok := m.ttlKeys.Get(key); ok && ttl < v.(int64) {
+		if item, exists := m.ttl.keyMap[key]; exists && ttl < item.expireAt {
 			res = m.SetTTL(key, ttl)
 		}
 	default:
@@ -179,13 +180,14 @@ func ttlKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if _, ok := m.db.Get(key); !ok {
 		return RESP.MakeIntData(int64(-2))
 	}
-	ttl, ok := m.ttlKeys.Get(key)
-	if !ok {
+
+	// 获取 TTL 信息
+	ttlItem, exists := m.ttl.keyMap[key]
+	if !exists {
 		return RESP.MakeIntData(int64(-1))
 	}
 	now := time.Now().Unix()
-	return RESP.MakeIntData(ttl.(int64) - now)
-
+	return RESP.MakeIntData(ttlItem.expireAt - now)
 }
 
 func typeKey(m *MemDb, cmd [][]byte) RESP.RedisData {
@@ -238,9 +240,9 @@ func renameKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData(fmt.Sprintf("error: %s not exist", oldName))
 	}
 	m.db.Delete(oldName)
-	m.ttlKeys.Delete(oldName)
+	m.ttl.RemoveTTL(oldName)
 	m.db.Delete(newName)
-	m.ttlKeys.Delete(newName)
+	m.ttl.RemoveTTL(newName)
 	m.db.Set(newName, oldValue)
 	return RESP.MakeStringData("OK")
 }

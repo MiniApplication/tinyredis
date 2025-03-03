@@ -2,9 +2,10 @@ package memdb
 
 import (
 	"bytes"
-	"github.com/hsn/tiny-redis/pkg/config"
 	"testing"
 	"time"
+
+	"github.com/hsn/tiny-redis/pkg/config"
 )
 
 func init() {
@@ -35,8 +36,11 @@ func TestSetString(t *testing.T) {
 	if !ok || !bytes.Equal(val.([]byte), []byte("b")) {
 		t.Error("set value error")
 	}
-	ttl, ok := mem.ttlKeys.Get("a")
-	if !ok || ttl.(int64)-time.Now().Unix() > 100 || ttl.(int64)-time.Now().Unix() < 99 {
+
+	// 检查 TTL 是否正确设置
+	if ttlItem, exists := mem.ttl.keyMap["a"]; !exists ||
+		ttlItem.expireAt-time.Now().Unix() > 100 ||
+		ttlItem.expireAt-time.Now().Unix() < 99 {
 		t.Error("set ttl error")
 	}
 
@@ -45,8 +49,9 @@ func TestSetString(t *testing.T) {
 	if !bytes.Equal(res.ToBytes(), []byte("$1\r\nb\r\n")) {
 		t.Error("set reply error")
 	}
-	_, ok = mem.ttlKeys.Get("a")
-	if ok {
+
+	// 检查 keepttl 是否正确保持了 TTL
+	if _, exists := mem.ttl.keyMap["a"]; !exists {
 		t.Error("set keepttl error")
 	}
 }

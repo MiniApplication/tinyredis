@@ -2,6 +2,7 @@ package memdb
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/hsn/tiny-redis/pkg/util"
 
@@ -9,8 +10,9 @@ import (
 )
 
 const (
-	MaxConSize       = 1<<31 - 1
-	TreeifyThreshold = 8 // 链表转换为红黑树的阈值
+	MaxConSize         = 1<<31 - 1
+	TreeifyThreshold   = 8 // 链表转换为红黑树的阈值
+	UntreeifyThreshold = 6 // 红黑树退化为链表的阈值
 )
 
 // listNode represents a node in a linked list.
@@ -20,21 +22,130 @@ type listNode struct {
 	next  *listNode
 }
 
+type dataStructure interface {
+	Get(key string) (any, bool)
+	Put(key string, value any) bool
+	Remove(key string) bool
+	Size() int
+	Keys() []string
+}
+
+type linkedList struct {
+	head  *listNode
+	count int32
+}
+
+func (l *linkedList) Get(key string) (any, bool) {
+	node := l.head
+	for node != nil {
+		if node.key == key {
+			return node.value, true
+		}
+		node = node.next
+	}
+	return nil, false
+}
+
+func (l *linkedList) Put(key string, value any) bool {
+	node := l.head
+	for node != nil {
+		if node.key == key {
+			node.value = value
+			return false
+		}
+		node = node.next
+	}
+	l.head = &listNode{key: key, value: value, next: l.head}
+	atomic.AddInt32(&l.count, 1)
+	return true
+}
+
+func (l *linkedList) Remove(key string) bool {
+	var prev *listNode
+	node := l.head
+	for node != nil {
+		if node.key == key {
+			if prev == nil {
+				l.head = node.next
+			} else {
+				prev.next = node.next
+			}
+			atomic.AddInt32(&l.count, -1)
+			return true
+		}
+		prev = node
+		node = node.next
+	}
+	return false
+}
+
+func (l *linkedList) Size() int {
+	return int(atomic.LoadInt32(&l.count))
+}
+
+func (l *linkedList) Keys() []string {
+	keys := make([]string, 0, l.Size())
+	node := l.head
+	for node != nil {
+		keys = append(keys, node.key)
+		node = node.next
+	}
+	return keys
+}
+
+// treeWrapper 包装 redblacktree.Tree 以实现 dataStructure 接口
+type treeWrapper struct {
+	tree *redblacktree.Tree
+}
+
+func newTreeWrapper() *treeWrapper {
+	return &treeWrapper{
+		tree: redblacktree.NewWithStringComparator(),
+	}
+}
+
+func (t *treeWrapper) Get(key string) (any, bool) {
+	return t.tree.Get(key)
+}
+
+func (t *treeWrapper) Put(key string, value any) bool {
+	_, found := t.tree.Get(key)
+	t.tree.Put(key, value)
+	return !found
+}
+
+func (t *treeWrapper) Remove(key string) bool {
+	_, found := t.tree.Get(key)
+	if found {
+		t.tree.Remove(key)
+	}
+	return found
+}
+
+func (t *treeWrapper) Size() int {
+	return t.tree.Size()
+}
+
+func (t *treeWrapper) Keys() []string {
+	keys := make([]string, 0, t.Size())
+	it := t.tree.Iterator()
+	for it.Next() {
+		keys = append(keys, it.Key().(string))
+	}
+	return keys
+}
+
 // shard represents a shard within the ConcurrentMap.
 type shard struct {
-	head  *listNode          // 链表头
-	tree  *redblacktree.Tree // 当元素数量超过 TreeifyThreshold 时，将链表转换为红黑树
-	count int                // 当前桶中的元素数量
-	rwMu  *sync.RWMutex      // 读写锁用于并发访问控制
-
-	_ [40]byte // 缓存行填充，防止伪共享
+	data dataStructure
+	rwMu sync.RWMutex
 }
 
 // ConcurrentMap 管理一个分片表，包含多个哈希表分片，提供线程安全的操作。
 type ConcurrentMap struct {
-	table []*shard // 哈希表分片数组
-	size  int      // 哈希表的大小
-	count int      // 所有分片中键值对的总数
+	shards    []*shard
+	shardMask int
+	count     int32
 }
 
 // NewConcurrentMap 创建一个新的 ConcurrentMap 实例
@@ -42,141 +153,106 @@ func NewConcurrentMap(size int) *ConcurrentMap {
 	if size > MaxConSize || size <= 0 {
 		size = MaxConSize
 	}
+	// 确保 size 是 2 的幂
+	size = 1 << uint(32-numberOfLeadingZeros(size-1))
 	m := &ConcurrentMap{
-		table: make([]*shard, size),
-		size:  size,
-		count: 0,
+		shards:    make([]*shard, size),
+		shardMask: size - 1,
 	}
 	for i := 0; i < size; i++ {
-		m.table[i] = &shard{
-			rwMu: &sync.RWMutex{},
+		m.shards[i] = &shard{
+			data: &linkedList{},
 		}
 	}
 	return m
 }
 
+func numberOfLeadingZeros(i int) int {
+	if i <= 0 {
+		return 32
+	}
+	n := 1
+	if i>>16 == 0 {
+		n += 16
+		i <<= 16
+	}
+	if i>>24 == 0 {
+		n += 8
+		i <<= 8
+	}
+	if i>>28 == 0 {
+		n += 4
+		i <<= 4
+	}
+	if i>>30 == 0 {
+		n += 2
+		i <<= 2
+	}
+	n -= i >> 31
+	return n
+}
+
 // getKeyPos 计算键的哈希值并找到对应的分片
 func (m *ConcurrentMap) getKeyPos(key string) int {
 	hash := util.HashKey(key)
-	pos := hash % m.size
-	if pos < 0 {
-		pos += m.size
-	}
-	return pos
+	return hash & m.shardMask
 }
 
 // Set 在 ConcurrentMap 中设置一个键值对。如果成功，返回 1，否则返回 0
 func (m *ConcurrentMap) Set(key string, value any) int {
-	added := 0
 	pos := m.getKeyPos(key)
-	shard := m.table[pos]
+	shard := m.shards[pos]
 	shard.rwMu.Lock()
 	defer shard.rwMu.Unlock()
 
-	if shard.tree != nil {
-		// 红黑树已存在，直接使用树插入
-		_, exists := shard.tree.Get(key)
-		shard.tree.Put(key, value)
-		if !exists {
-			m.count++
-			shard.count++
-			added = 1
-		}
-	} else {
-		// 使用链表插入新元素
-		node := shard.head
-		for node != nil {
-			if node.key == key {
-				node.value = value
-				return added
+	if shard.data.Put(key, value) {
+		atomic.AddInt32(&m.count, 1)
+		// 检查是否需要转换为红黑树
+		if ll, ok := shard.data.(*linkedList); ok && ll.Size() >= TreeifyThreshold {
+			tree := newTreeWrapper()
+			for _, key := range ll.Keys() {
+				if val, ok := ll.Get(key); ok {
+					tree.Put(key, val)
+				}
 			}
-			node = node.next
+			shard.data = tree
 		}
-		// 在链表头部插入新节点
-		shard.head = &listNode{key: key, value: value, next: shard.head}
-		shard.count++
-		m.count++
-		added = 1
-
-		// 检查是否需要将链表转换为红黑树
-		if shard.count >= TreeifyThreshold {
-			shard.treeify()
-		}
+		return 1
 	}
-	return added
-}
-
-func (s *shard) treeify() {
-	if s.head == nil {
-		return
-	}
-	s.tree = redblacktree.NewWithStringComparator()
-	node := s.head
-	for node != nil {
-		s.tree.Put(node.key, node.value)
-		node = node.next
-	}
-	s.head = nil
+	return 0
 }
 
 // Get 从 ConcurrentMap 中获取一个键的值
 func (m *ConcurrentMap) Get(key string) (any, bool) {
 	pos := m.getKeyPos(key)
-	shard := m.table[pos]
+	shard := m.shards[pos]
 	shard.rwMu.RLock()
 	defer shard.rwMu.RUnlock()
 
-	if shard.tree != nil {
-		// 从红黑树中查找
-		value, found := shard.tree.Get(key)
-		return value, found
-	} else {
-		// 从链表中查找
-		node := shard.head
-		for node != nil {
-			if node.key == key {
-				return node.value, true
-			}
-			node = node.next
-		}
-	}
-	return nil, false
+	return shard.data.Get(key)
 }
 
 // Delete 从 ConcurrentMap 中删除一个键值对。如果成功，返回 1，否则返回 0
 func (m *ConcurrentMap) Delete(key string) int {
 	pos := m.getKeyPos(key)
-	shard := m.table[pos]
+	shard := m.shards[pos]
 	shard.rwMu.Lock()
 	defer shard.rwMu.Unlock()
 
-	if shard.tree != nil {
-		// 从红黑树中删除
-		_, found := shard.tree.Get(key)
-		if found {
-			shard.tree.Remove(key)
-			shard.count--
-			m.count--
-			return 1
-		}
-	} else {
-		// 从链表中删除
-		var prev *listNode
-		node := shard.head
-		for node != nil {
-			if node.key == key {
-				if prev == nil {
-					shard.head = node.next
-				} else {
-					prev.next = node.next
+	if shard.data.Remove(key) {
+		atomic.AddInt32(&m.count, -1)
+		// 检查是否需要将红黑树转换回链表
+		if tree, ok := shard.data.(*treeWrapper); ok && tree.Size() <= UntreeifyThreshold {
+			list := &linkedList{}
+			keys := tree.Keys()
+			for _, key := range keys {
+				if val, ok := tree.Get(key); ok {
+					list.Put(key, val)
 				}
-				shard.count--
-				m.count--
-				return 1
 			}
-			prev = node
-			node = node.next
+			shard.data = list
 		}
+		return 1
 	}
 	return 0
 }
@@ -184,24 +260,13 @@ func (m *ConcurrentMap) Delete(key string) int {
 // SetIfExist 在键存在时存储键值对。如果键存在，则替换为新值，返回 1，否则返回 0
 func (m *ConcurrentMap) SetIfExist(key string, value any) int {
 	pos := m.getKeyPos(key)
-	shard := m.table[pos]
+	shard := m.shards[pos]
 	shard.rwMu.Lock()
 	defer shard.rwMu.Unlock()
 
-	if shard.tree != nil {
-		if _, found := shard.tree.Get(key); found {
-			shard.tree.Put(key, value)
-			return 1
-		}
-	} else {
-		node := shard.head
-		for node != nil {
-			if node.key == key {
-				node.value = value
-				return 1
-			}
-			node = node.next
-		}
+	if _, found := shard.data.Get(key); found {
+		shard.data.Put(key, value)
+		return 1
 	}
 	return 0
 }
@@ -209,34 +274,13 @@ func (m *ConcurrentMap) SetIfExist(key string, value any) int {
 // SetIfNotExist 在键不存在时存储键值对。如果键不存在，则存储并返回 1，否则返回 0
 func (m *ConcurrentMap) SetIfNotExist(key string, value any) int {
 	pos := m.getKeyPos(key)
-	shard := m.table[pos]
+	shard := m.shards[pos]
 	shard.rwMu.Lock()
 	defer shard.rwMu.Unlock()
 
-	if shard.tree != nil {
-		if _, found := shard.tree.Get(key); !found {
-			shard.tree.Put(key, value)
-			shard.count++
-			m.count++
-			return 1
-		}
-	} else {
-		node := shard.head
-		for node != nil {
-			if node.key == key {
-				return 0
-			}
-			node = node.next
-		}
-		// 在链表头部插入新节点
-		shard.head = &listNode{key: key, value: value, next: shard.head}
-		shard.count++
-		m.count++
-
-		// 检查是否需要将链表转换为红黑树
-		if shard.count >= TreeifyThreshold {
-			shard.treeify()
-		}
+	if _, found := shard.data.Get(key); !found {
+		shard.data.Put(key, value)
+		atomic.AddInt32(&m.count, 1)
 		return 1
 	}
 	return 0
@@ -244,34 +288,25 @@ func (m *ConcurrentMap) SetIfNotExist(key string, value any) int {
 
 // Len 返回 ConcurrentMap 中键值对的总数
 func (m *ConcurrentMap) Len() int {
-	return m.count
+	return int(atomic.LoadInt32(&m.count))
 }
 
 // Clear 清空 ConcurrentMap 中的所有键值对
 func (m *ConcurrentMap) Clear() {
-	*m = *NewConcurrentMap(m.size)
+	*m = *NewConcurrentMap(len(m.shards))
 }
 
 // Keys 返回 ConcurrentMap 中所有的键
 func (m *ConcurrentMap) Keys() []string {
-	keys := make([]string, m.count)
-	i := 0
-	for _, shard := range m.table {
+	totalLen := m.Len()
+	if totalLen == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, totalLen)
+	for _, shard := range m.shards {
 		shard.rwMu.RLock()
-		if shard.tree != nil {
-			it := shard.tree.Iterator()
-			for it.Next() {
-				keys[i] = it.Key().(string)
-				i++
-			}
-		} else {
-			node := shard.head
-			for node != nil {
-				keys[i] = node.key
-				i++
-				node = node.next
-			}
-		}
+		keys = append(keys, shard.data.Keys()...)
 		shard.rwMu.RUnlock()
 	}
 	return keys
