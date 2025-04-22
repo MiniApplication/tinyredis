@@ -40,8 +40,8 @@ func (h *TTLHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
 	item := old[n-1]
-	old[n-1] = nil  // 避免内存泄漏
-	item.index = -1 // 标记为已移除
+	old[n-1] = nil
+	item.index = -1
 	*h = old[0 : n-1]
 	return item
 }
@@ -52,13 +52,15 @@ type TTLManager struct {
 	keyMap   map[string]*TTLItem
 	lock     sync.RWMutex
 	stopChan chan struct{}
+	db       *ConcurrentMap
 }
 
-func NewTTLManager() *TTLManager {
+func NewTTLManager(db *ConcurrentMap) *TTLManager {
 	tm := &TTLManager{
 		heap:     make(TTLHeap, 0),
 		keyMap:   make(map[string]*TTLItem),
 		stopChan: make(chan struct{}),
+		db:       db,
 	}
 	heap.Init(&tm.heap)
 	go tm.cleanupLoop()
@@ -91,6 +93,7 @@ func (tm *TTLManager) cleanup() {
 		}
 		heap.Pop(&tm.heap)
 		delete(tm.keyMap, item.key)
+		tm.db.Delete(item.key)
 	}
 }
 
@@ -158,9 +161,10 @@ type MemDb struct {
 }
 
 func NewMemDb() *MemDb {
+	db := NewConcurrentMap(config.Configures.ShardNum)
 	return &MemDb{
-		db:    NewConcurrentMap(config.Configures.ShardNum),
-		ttl:   NewTTLManager(),
+		db:    db,
+		ttl:   NewTTLManager(db),
 		locks: NewLocks(config.Configures.ShardNum * 2),
 	}
 }
