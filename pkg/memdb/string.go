@@ -27,6 +27,7 @@ func RegisterStringCommands() {
 	RegisterCommand("incrbyfloat", incrByFloatString)
 	RegisterCommand("append", appendString)
 }
+
 func setString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	cmdName := string(cmd[0])
 	if strings.ToLower(cmdName) != "set" {
@@ -91,10 +92,10 @@ func setString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if nx || xx {
 		if nx {
 			if oldOk {
+				res = RESP.MakeNullBulkData()
+			} else {
 				m.db.Set(string(cmd[1]), cmd[2])
 				res = RESP.MakeStringData("OK")
-			} else {
-				res = RESP.MakeNullBulkData()
 			}
 		} else {
 			if oldOk {
@@ -123,6 +124,7 @@ func setString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return res
 }
+
 func getString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "get" {
 		logger.Error("getString Function: cmdName is not get")
@@ -147,6 +149,7 @@ func getString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return RESP.MakeBulkData(byteVal)
 }
+
 func setRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "setrange" {
 		logger.Error("setRangeString Function: cmdName is not setrange")
@@ -188,6 +191,7 @@ func setRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.db.Set(key, newVal)
 	return RESP.MakeIntData(int64(len(newVal)))
 }
+
 func getRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "getrange" {
 		logger.Error("getRangeString Function: cmdName is not getrange")
@@ -233,6 +237,7 @@ func getRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return RESP.MakeBulkData(byteVal[start:end])
 }
+
 func mSetString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "mset" {
 		logger.Error("mSetString Function: cmdName is not mset")
@@ -255,6 +260,7 @@ func mSetString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return RESP.MakeStringData("OK")
 }
+
 func mGetString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "mget" {
 		logger.Error("mGetString Function: cmdName is not mget")
@@ -287,6 +293,7 @@ func mGetString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return RESP.MakeArrayData(res)
 }
+
 func setExString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "setex" {
 		logger.Error("setExString Function: cmdName is not setEx")
@@ -308,6 +315,7 @@ func setExString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.SetTTL(key, ttl)
 	return RESP.MakeStringData("OK")
 }
+
 func setNxString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "setnx" {
 		logger.Error("setNxString Function: commands is invalid")
@@ -324,6 +332,7 @@ func setNxString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	res := m.db.SetIfNotExist(key, val)
 	return RESP.MakeIntData(int64(res))
 }
+
 func strLenString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "strlen" {
 		logger.Error("strLenString Function: cmdName is not strlen")
@@ -346,6 +355,7 @@ func strLenString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	return RESP.MakeIntData(int64(len(byteVal)))
 }
+
 func incrString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "incr" {
 		logger.Error("incrString Function: cmdName is not incr")
@@ -375,6 +385,7 @@ func incrString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.db.Set(key, []byte(strconv.FormatInt(intVal, 10)))
 	return RESP.MakeIntData(intVal)
 }
+
 func incrByString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "incrby" {
 		logger.Error("incrByString Funcction: cmdName is not incrby")
@@ -409,6 +420,7 @@ func incrByString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.db.Set(key, []byte(strconv.FormatInt(intVal, 10)))
 	return RESP.MakeIntData(intVal)
 }
+
 func decrString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "decr" {
 		logger.Error("decrString Function: cmdName is not decr")
@@ -439,6 +451,7 @@ func decrString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.db.Set(key, []byte(strconv.FormatInt(intVal, 10)))
 	return RESP.MakeIntData(intVal)
 }
+
 func decrByString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "decrby" {
 		logger.Error("decrByString Function: cmdName is not decrby")
@@ -472,8 +485,8 @@ func decrByString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	intVal -= dec
 	m.db.Set(key, []byte(strconv.FormatInt(intVal, 10)))
 	return RESP.MakeIntData(intVal)
-
 }
+
 func incrByFloatString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "incrbyfloat" {
 		logger.Error("incrByFloatString Function: cmdName is not incrbyfloat")
@@ -511,6 +524,7 @@ func incrByFloatString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.db.Set(key, []byte(strconv.FormatFloat(floatVal, 'f', -1, 64)))
 	return RESP.MakeBulkData([]byte(strconv.FormatFloat(floatVal, 'f', -1, 64)))
 }
+
 func appendString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "append" {
 		logger.Error("appendString Function: cmdName is not append")
