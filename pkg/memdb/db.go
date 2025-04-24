@@ -15,7 +15,7 @@ import (
 type TTLItem struct {
 	key      string
 	expireAt int64
-	index    int // 用于 heap 实现
+	index    int
 }
 
 // TTLHeap 是一个最小堆，用于高效管理过期键
