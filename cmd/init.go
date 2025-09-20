@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hsn/tiny-redis/pkg/config"
-	"github.com/hsn/tiny-redis/pkg/logger"
-	"github.com/hsn/tiny-redis/pkg/memdb"
-	"github.com/hsn/tiny-redis/pkg/server"
+	"github.com/hsn0918/tinyredis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/memdb"
+	"github.com/hsn0918/tinyredis/pkg/server"
 	"github.com/spf13/cobra"
 )
 

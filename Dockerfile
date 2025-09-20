@@ -9,7 +9,7 @@ WORKDIR /build
 
 COPY . .
 
-RUN go mod tidy && go build -o ./tiny-redis main.go
+RUN go mod tidy && go build -o ./tiny-redis ./cmd/tinyredis
 RUN go get github.com/holys/redis-cli && go install github.com/holys/redis-cli
 
 

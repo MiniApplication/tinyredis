@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/hsn/tiny-redis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/config"
 )
 
 var (

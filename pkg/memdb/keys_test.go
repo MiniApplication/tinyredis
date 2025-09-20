@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hsn/tiny-redis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/config"
 )
 
 func init() {

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	RESP2 "github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/config"
+	RESP2 "github.com/hsn0918/tinyredis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/config"
 )
 
 func init() {

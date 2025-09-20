@@ -1,7 +1,7 @@
 package memdb
 
 import (
-	"github.com/hsn/tiny-redis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/RESP"
 )
 
 type cmdExecutor func(m *MemDb, cmd [][]byte) RESP.RedisData

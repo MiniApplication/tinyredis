@@ -10,7 +10,7 @@ all: build
 # 构建二进制文件
 build:
 	@echo "==> Building binary..."
-	@go build -o $(BINARY_NAME)
+	@go build -o $(BINARY_NAME) ./cmd/tinyredis
 
 # 运行测试
 test:

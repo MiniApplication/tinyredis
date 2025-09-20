@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 func RegisterHashCommands() {

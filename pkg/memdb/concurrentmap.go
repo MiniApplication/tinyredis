@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/hsn/tiny-redis/pkg/util"
+	"github.com/hsn0918/tinyredis/pkg/util"
 
 	"github.com/emirpasic/gods/trees/redblacktree"
 )

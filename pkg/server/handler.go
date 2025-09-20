@@ -4,9 +4,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/logger"
-	"github.com/hsn/tiny-redis/pkg/memdb"
+	"github.com/hsn0918/tinyredis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/memdb"
 )
 
 type Handler struct {

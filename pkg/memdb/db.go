@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hsn/tiny-redis/pkg/RESP"
-	"github.com/hsn/tiny-redis/pkg/config"
-	"github.com/hsn/tiny-redis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 // TTLItem represents a key with its expiration time

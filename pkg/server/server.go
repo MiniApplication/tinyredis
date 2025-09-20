@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/hsn/tiny-redis/pkg/config"
-	"github.com/hsn/tiny-redis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 // Start starts a simple redis server
