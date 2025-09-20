@@ -215,3 +215,40 @@ func (m *MemDb) DelTTL(key string) int {
 	m.ttl.RemoveTTL(key)
 	return 1
 }
+
+// Get 获取键的值
+func (m *MemDb) Get(key string) (interface{}, bool) {
+	return m.db.Get(key)
+}
+
+// Set 设置键值对
+func (m *MemDb) Set(key string, value interface{}) {
+	m.db.Set(key, value)
+}
+
+// Keys 获取所有键
+func (m *MemDb) Keys() []string {
+	return m.db.Keys()
+}
+
+// Size 获取键值对数量
+func (m *MemDb) Size() int {
+	return m.db.Len()
+}
+
+// GetTTL 获取键的 TTL（秒）
+func (m *MemDb) GetTTL(key string) int64 {
+	m.ttl.lock.RLock()
+	item, exists := m.ttl.keyMap[key]
+	m.ttl.lock.RUnlock()
+
+	if !exists {
+		return -1
+	}
+
+	ttl := item.expireAt - time.Now().Unix()
+	if ttl <= 0 {
+		return -1
+	}
+	return ttl
+}

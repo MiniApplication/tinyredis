@@ -4,13 +4,17 @@ import "github.com/spaolacci/murmur3"
 
 // HashKey hashes a string to an int value using MurmurHash3 algorithm
 func HashKey(key string) int {
-	// Optional: Use a salt to make the key more unique, if needed
-	key = "@#&" + key + "*^%$"
-	// Generate a 64-bit hash using MurmurHash3
-	hash := murmur3.Sum64([]byte(key))
-	// Convert to int and return
-	return int(hash)
+	const seed uint32 = 0x1234ABCD
+	hash := murmur3.Sum64WithSeed([]byte(key), seed)
 
+	hash ^= hash >> 32
+	hash *= 0xc6a4a7935bd1e995
+	hash ^= hash >> 47
+
+	if hash < 0 {
+		return int(-hash)
+	}
+	return int(hash)
 }
 
 // PatternMatch matches a string with a wildcard pattern.

@@ -1,33 +1,45 @@
 package memdb
 
-import "strconv"
+import (
+	"strconv"
+	"sync/atomic"
+)
 
+// Hash 优化的哈希表结构
 type Hash struct {
 	table map[string][]byte
+	size  int32
 }
 
 func NewHash() *Hash {
-	return &Hash{make(map[string][]byte)}
+	return &Hash{
+		table: make(map[string][]byte, 16),
+		size:  0,
+	}
 }
 
 func (h *Hash) Set(key string, value []byte) {
+	if _, exists := h.table[key]; !exists {
+		atomic.AddInt32(&h.size, 1)
+	}
 	h.table[key] = value
 }
 
 func (h *Hash) Get(key string) []byte {
-	return h.table[key]
+	return h.table[key] // 保持简单高效
 }
 
 func (h *Hash) Del(key string) int {
-	if h.Exist(key) {
+	if _, ok := h.table[key]; ok {
 		delete(h.table, key)
+		atomic.AddInt32(&h.size, -1)
 		return 1
 	}
 	return 0
 }
 
 func (h *Hash) Len() int {
-	return len(h.table)
+	return int(atomic.LoadInt32(&h.size))
 }
 
 func (h *Hash) Keys() []string {
@@ -47,11 +59,18 @@ func (h *Hash) Values() [][]byte {
 }
 
 func (h *Hash) Clear() {
-	h.table = make(map[string][]byte)
+	if h.Len() > 256 {
+		h.table = make(map[string][]byte, 16)
+	} else {
+		for k := range h.table {
+			delete(h.table, k)
+		}
+	}
+	atomic.StoreInt32(&h.size, 0)
 }
 
 func (h *Hash) IsEmpty() bool {
-	return len(h.table) == 0
+	return atomic.LoadInt32(&h.size) == 0
 }
 
 func (h *Hash) Exist(key string) bool {
@@ -64,61 +83,68 @@ func (h *Hash) StrLen(key string) int {
 }
 
 func (h *Hash) Random(count int) []string {
-	res := make([]string, 0)
-	if count == 0 || h.Len() == 0 {
-		return res
-	} else if count > 0 {
-		if count > h.Len() {
-			count = h.Len()
+	size := h.Len()
+	if count == 0 || size == 0 {
+		return []string{}
+	}
+
+	if count > 0 {
+		if count > size {
+			count = size
 		}
+		res := make([]string, 0, count) // 预分配容量
 		for key := range h.table {
 			res = append(res, key)
 			if len(res) == count {
 				break
 			}
 		}
+		return res
 	} else {
-		for {
+		// 负数表示可重复选择
+		res := make([]string, 0, -count)
+		for len(res) < -count {
 			for key := range h.table {
 				res = append(res, key)
 				if len(res) == -count {
 					return res
 				}
 			}
-
 		}
+		return res
 	}
-	return res
 }
 
 func (h *Hash) RandomWithValue(count int) [][]byte {
-	res := make([][]byte, 0)
-	if count == 0 || h.Len() == 0 {
-		return res
-	} else if count > 0 {
-		if count > h.Len() {
-			count = h.Len()
+	size := h.Len()
+	if count == 0 || size == 0 {
+		return [][]byte{}
+	}
+
+	if count > 0 {
+		if count > size {
+			count = size
 		}
-		count *= 2
+		res := make([][]byte, 0, count*2) // 预分配容量
 		for key, val := range h.table {
 			res = append(res, []byte(key), val)
-			if len(res) == count {
+			if len(res) >= count*2 {
 				break
 			}
 		}
+		return res
 	} else {
-		count *= 2
-		for {
+		res := make([][]byte, 0, -count*2)
+		for len(res) < -count*2 {
 			for key, val := range h.table {
 				res = append(res, []byte(key), val)
-				if len(res) == -count {
+				if len(res) >= -count*2 {
 					return res
 				}
 			}
-
 		}
+		return res
 	}
-	return res
 }
 
 func (h *Hash) Table() map[string][]byte {
@@ -126,33 +152,37 @@ func (h *Hash) Table() map[string][]byte {
 }
 
 func (h *Hash) IncrBy(key string, incr int) (int, bool) {
-	tem := h.Get(key)
-	if len(tem) == 0 {
-		h.Set(key, []byte(strconv.Itoa(incr)))
+	currentVal := h.table[key]
+	if len(currentVal) == 0 {
+		newVal := strconv.Itoa(incr)
+		h.table[key] = []byte(newVal)
+		atomic.AddInt32(&h.size, 1)
 		return incr, true
-	} else {
-		value, err := strconv.Atoi(string(tem))
-		if err != nil {
-			return 0, false
-		}
-		value += incr
-		h.Set(key, []byte(strconv.Itoa(value)))
-		return value, true
 	}
+
+	value, err := strconv.Atoi(string(currentVal))
+	if err != nil {
+		return 0, false
+	}
+	value += incr
+	h.table[key] = []byte(strconv.Itoa(value))
+	return value, true
 }
 
 func (h *Hash) IncrByFloat(key string, incr float64) (float64, bool) {
-	tem := h.Get(key)
-	if len(tem) == 0 {
-		h.Set(key, []byte(strconv.FormatFloat(incr, 'f', -1, 64)))
+	currentVal := h.table[key]
+	if len(currentVal) == 0 {
+		newVal := strconv.FormatFloat(incr, 'f', -1, 64)
+		h.table[key] = []byte(newVal)
+		atomic.AddInt32(&h.size, 1)
 		return incr, true
-	} else {
-		value, err := strconv.ParseFloat(string(tem), 64)
-		if err != nil {
-			return 0, false
-		}
-		value += incr
-		h.Set(key, []byte(strconv.FormatFloat(value, 'f', -1, 64)))
-		return value, true
 	}
+
+	value, err := strconv.ParseFloat(string(currentVal), 64)
+	if err != nil {
+		return 0, false
+	}
+	value += incr
+	h.table[key] = []byte(strconv.FormatFloat(value, 'f', -1, 64))
+	return value, true
 }

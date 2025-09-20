@@ -1,71 +1,150 @@
 package logger
 
 import (
-	"fmt"
-	"io"
-	"log"
-	"os"
-	"path"
-	"path/filepath"
-	"runtime"
-	"sync"
-
 	"github.com/hsn/tiny-redis/pkg/config"
+	"go.uber.org/zap"
 )
 
-type LogConfig struct {
-	Path  string
-	Name  string
-	Level LogLevel
-}
-
-var (
-	logFile            *os.File
-	logger             *log.Logger
-	logMu              sync.Mutex
-	levelLabels        = []string{"debug", "info", "warning", "error", "panic"}
-	logcfg             *LogConfig
-	defaultCallerDepth = 2
-	logPrefix          = ""
-)
-
-func SetUp(cfg *config.Config) (err error) {
-	logcfg = &LogConfig{
-		Path:  cfg.LogDir,
-		Name:  "redis.log",
-		Level: INFO,
-	}
-	for i, v := range levelLabels {
-		if v == cfg.LogLevel {
-			logcfg.Level = LogLevel(i)
-			break
-		}
-	}
-	if _, err = os.Stat(logcfg.Path); err != nil {
-		mkErr := os.Mkdir(logcfg.Path, 0755)
-		if mkErr != nil {
-			return mkErr
-		}
-	}
-	logfile := path.Join(logcfg.Path, logcfg.Name)
-	logFile, err = os.OpenFile(logfile, os.O_RDWR|os.O_CREATE, 0755)
-	if err != nil {
+// SetUp initializes the logger with zap
+func SetUp(cfg *config.Config) error {
+	// Initialize zap logger
+	if err := InitZapLogger(cfg); err != nil {
 		return err
 	}
-	writer := io.MultiWriter(os.Stdout, logFile)
-	logger = log.New(writer, "", log.LstdFlags)
 
 	return nil
 }
+
+// Disable disables logging
 func Disable() {
-	logger.SetOutput(io.Discard)
-}
-func setPrefix(level LogLevel) {
-	_, file, line, ok := runtime.Caller(defaultCallerDepth)
-	if ok {
-		logPrefix = fmt.Sprintf("[%s][%s:%d] ", levelLabels[level], filepath.Base(file), line)
-	} else {
-		logPrefix = fmt.Sprintf("[%s] ", levelLabels[level])
+	if Logger != nil {
+		Logger = zap.NewNop()
+		Sugar = Logger.Sugar()
 	}
-	logger.SetPrefix(logPrefix)
+}
+
+// Debug logs a debug message with optional fields
+func Debug(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Debug(args...)
+	}
+}
+
+// Debugf logs a formatted debug message
+func Debugf(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Debugf(template, args...)
+	}
+}
+
+// DebugWithFields logs a debug message with structured fields
+func DebugWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Debug(msg, fields...)
+	}
+}
+
+// Info logs an info message with optional fields
+func Info(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Info(args...)
+	}
+}
+
+// Infof logs a formatted info message
+func Infof(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Infof(template, args...)
+	}
+}
+
+// InfoWithFields logs an info message with structured fields
+func InfoWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Info(msg, fields...)
+	}
+}
+
+// Warning logs a warning message with optional fields
+func Warning(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Warn(args...)
+	}
+}
+
+// Warnf logs a formatted warning message
+func Warnf(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Warnf(template, args...)
+	}
+}
+
+// WarnWithFields logs a warning message with structured fields
+func WarnWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Warn(msg, fields...)
+	}
+}
+
+// Error logs an error message with optional fields
+func Error(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Error(args...)
+	}
+}
+
+// Errorf logs a formatted error message
+func Errorf(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Errorf(template, args...)
+	}
+}
+
+// ErrorWithFields logs an error message with structured fields
+func ErrorWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Error(msg, fields...)
+	}
+}
+
+// Panic logs a panic message and panics
+func Panic(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Panic(args...)
+	}
+}
+
+// Panicf logs a formatted panic message and panics
+func Panicf(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Panicf(template, args...)
+	}
+}
+
+// PanicWithFields logs a panic message with structured fields and panics
+func PanicWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Panic(msg, fields...)
+	}
+}
+
+// Fatal logs a fatal message and exits the program
+func Fatal(args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Fatal(args...)
+	}
+}
+
+// Fatalf logs a formatted fatal message and exits the program
+func Fatalf(template string, args ...interface{}) {
+	if Sugar != nil {
+		Sugar.Fatalf(template, args...)
+	}
+}
+
+// FatalWithFields logs a fatal message with structured fields and exits
+func FatalWithFields(msg string, fields ...zap.Field) {
+	if Logger != nil {
+		Logger.Fatal(msg, fields...)
+	}
 }

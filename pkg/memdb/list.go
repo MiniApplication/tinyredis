@@ -65,12 +65,12 @@ func lMoveList(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 	defer func() {
-		if srcList.Len == 0 {
+		if srcList.Len() == 0 {
 			m.db.Delete(src)
 			m.DelTTL(src)
 		}
 	}()
-	if srcList.Len == 0 {
+	if srcList.Len() == 0 {
 		return RESP.MakeNullBulkData()
 	}
 
@@ -171,7 +171,7 @@ func lTrimList(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 	defer func() {
-		if list.Len == 0 {
+		if list.Len() == 0 {
 			m.db.Delete(key)
 			m.DelTTL(key)
 		}
@@ -214,7 +214,7 @@ func lRemList(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 	defer func() {
-		if list.Len == 0 {
+		if list.Len() == 0 {
 			m.db.Delete(key)
 			m.DelTTL(key)
 		}
@@ -291,7 +291,7 @@ func rPushXList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	for i := 2; i < len(cmd); i++ {
 		list.RPush(cmd[i])
 	}
-	return RESP.MakeIntData(int64(list.Len))
+	return RESP.MakeIntData(int64(list.Len()))
 }
 
 func rPushList(m *MemDb, cmd [][]byte) RESP.RedisData {
@@ -324,7 +324,7 @@ func rPushList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	for i := 2; i < len(cmd); i++ {
 		list.RPush(cmd[i])
 	}
-	return RESP.MakeIntData(int64(list.Len))
+	return RESP.MakeIntData(int64(list.Len()))
 }
 
 func lPushXList(m *MemDb, cmd [][]byte) RESP.RedisData {
@@ -354,7 +354,7 @@ func lPushXList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	for i := 2; i < len(cmd); i++ {
 		list.LPush(cmd[i])
 	}
-	return RESP.MakeIntData(int64(list.Len))
+	return RESP.MakeIntData(int64(list.Len()))
 }
 func lPushList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "lpush" {
@@ -384,7 +384,7 @@ func lPushList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	for i := 2; i < len(cmd); i++ {
 		list.LPush(cmd[i])
 	}
-	return RESP.MakeIntData(int64(list.Len))
+	return RESP.MakeIntData(int64(list.Len()))
 }
 func rPopList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "rpop" {
@@ -419,7 +419,7 @@ func rPopList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 
 	defer func() {
-		if list.Len == 0 {
+		if list.Len() == 0 {
 			m.db.Delete(key)
 			m.DelTTL(key)
 		}
@@ -478,7 +478,7 @@ func lPopList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	// remove the key when list is empty
 	defer func() {
-		if list.Len == 0 {
+		if list.Len() == 0 {
 			m.db.Delete(key)
 			m.DelTTL(key)
 		}
@@ -563,15 +563,15 @@ func lPosList(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 
-	if list.Len == 0 {
+	if list.Len() == 0 {
 		return RESP.MakeNullBulkData()
 	}
 	if count && countVal == 0 {
-		countVal = list.Len
+		countVal = list.Len()
 	}
 
 	if maxLen && maxLenVal == 0 {
-		maxLenVal = list.Len
+		maxLenVal = list.Len()
 	}
 
 	// normally pos without options
@@ -605,7 +605,7 @@ func lPosList(m *MemDb, cmd [][]byte) RESP.RedisData {
 			}
 		} else {
 			reverse = true
-			pos = list.Len
+			pos = list.Len()
 			for now = list.Tail.Prev; now != list.Head; now = now.Prev {
 				pos--
 				if bytes.Equal(now.Val, elem) {
@@ -745,7 +745,7 @@ func lLenList(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if !ok {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
-	res := listVal.Len
+	res := listVal.Len()
 	return RESP.MakeIntData(int64(res))
 
 }

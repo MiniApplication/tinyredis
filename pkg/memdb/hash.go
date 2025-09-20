@@ -304,14 +304,14 @@ func hLenHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	hash, ok := tem.(*Hash)
 	if !ok {
-		RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 	res := hash.Len()
 	return RESP.MakeIntData(int64(res))
 }
 func hSetHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "hset" {
-		logger.Error("hMSetHash Function: cmdName is not hset")
+		logger.Error("hSetHash Function: cmdName is not hset")
 		return RESP.MakeErrorData("Server error")
 	}
 	if len(cmd) < 4 || len(cmd)&1 == 1 {
@@ -333,12 +333,17 @@ func hSetHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 			return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 		}
 	}
+	// 优化：批量设置
+	addedCount := 0
 	for i := 2; i < len(cmd); i += 2 {
 		field := string(cmd[i])
 		value := cmd[i+1]
+		if _, exists := hash.table[field]; !exists {
+			addedCount++
+		}
 		hash.Set(field, value)
 	}
-	return RESP.MakeStringData("OK")
+	return RESP.MakeIntData(int64(addedCount))
 }
 func hGetHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if strings.ToLower(string(cmd[0])) != "hget" {
@@ -378,26 +383,36 @@ func hMGetHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 	key := string(cmd[1])
 	if !m.CheckTTL(key) {
-		return RESP.MakeEmptyArrayData()
+		// 优化：直接返回null元素数组
+		res := make([]RESP.RedisData, len(cmd)-2)
+		for i := range res {
+			res[i] = RESP.MakeBulkData(nil)
+		}
+		return RESP.MakeArrayData(res)
 	}
 	m.locks.RLock(key)
 	defer m.locks.RUnLock(key)
 	tem, ok := m.db.Get(key)
 	if !ok {
-		return RESP.MakeEmptyArrayData()
+		res := make([]RESP.RedisData, len(cmd)-2)
+		for i := range res {
+			res[i] = RESP.MakeBulkData(nil)
+		}
+		return RESP.MakeArrayData(res)
 	}
 	hash, ok := tem.(*Hash)
 	if !ok {
 		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
-	res := make([]RESP.RedisData, 0, len(cmd)-2)
+	// 优化：预分配精确大小
+	res := make([]RESP.RedisData, len(cmd)-2)
 	for i := 2; i < len(cmd); i++ {
 		field := string(cmd[i])
 		data := hash.Get(field)
 		if len(data) == 0 {
-			res = append(res, RESP.MakeBulkData(nil))
+			res[i-2] = RESP.MakeBulkData(nil)
 		} else {
-			res = append(res, RESP.MakeBulkData(data))
+			res[i-2] = RESP.MakeBulkData(data)
 		}
 	}
 	return RESP.MakeArrayData(res)
@@ -438,12 +453,12 @@ func hDelHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	return RESP.MakeIntData(int64(res))
 }
 func hExistsHash(m *MemDb, cmd [][]byte) RESP.RedisData {
-	if strings.ToLower(string(cmd[0])) != "hexist" {
-		logger.Error("hExistsHash Function: cmdName is not hexist")
+	if strings.ToLower(string(cmd[0])) != "hexists" {
+		logger.Error("hExistsHash Function: cmdName is not hexists")
 		return RESP.MakeErrorData("Server error")
 	}
 	if len(cmd) != 3 {
-		RESP.MakeErrorData("wrong number of arguments for 'hexists' command")
+		return RESP.MakeErrorData("wrong number of arguments for 'hexists' command")
 	}
 	key := string(cmd[1])
 	if !m.CheckTTL(key) {
@@ -453,11 +468,11 @@ func hExistsHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	defer m.locks.RUnLock(key)
 	tem, ok := m.db.Get(key)
 	if !ok {
-		RESP.MakeIntData(0)
+		return RESP.MakeIntData(0)
 	}
 	hash, ok := tem.(*Hash)
 	if !ok {
-		RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
+		return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 	}
 	if hash.Exist(string(cmd[2])) {
 		return RESP.MakeIntData(1)
@@ -465,7 +480,7 @@ func hExistsHash(m *MemDb, cmd [][]byte) RESP.RedisData {
 	return RESP.MakeIntData(0)
 }
 func hGetAllHash(m *MemDb, cmd [][]byte) RESP.RedisData {
-	if strings.ToLower(string(cmd[0])) != "hget" {
+	if strings.ToLower(string(cmd[0])) != "hgetall" {
 		logger.Error("hGetAllHash Function: cmdName is not hgetall")
 		return RESP.MakeErrorData("Server error")
 	}

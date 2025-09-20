@@ -1,12 +1,15 @@
 package memdb
 
-import "bytes"
+import (
+	"bytes"
+	"sync/atomic"
+)
 
 // List implements a double linked list for redis list
 type List struct {
 	Head *ListNode
 	Tail *ListNode
-	Len  int
+	len  int64 // Use atomic for thread-safe length tracking
 }
 
 type ListNode struct {
@@ -20,26 +23,42 @@ func NewList() *List {
 	tail := &ListNode{}
 	head.Next = tail
 	tail.Prev = head
-	return &List{Head: head, Tail: tail, Len: 0}
+	return &List{Head: head, Tail: tail, len: 0}
+}
+
+// Len returns the length of the list (thread-safe)
+func (l *List) Len() int {
+	return int(atomic.LoadInt64(&l.len))
 }
 
 func (l *List) Index(index int) *ListNode {
+	len := l.Len()
 	var node *ListNode
+
+	// Optimize by choosing the shorter path
 	if index < 0 {
-		if -index > l.Len {
+		if -index > len {
 			return nil
 		}
-		node = l.Tail.Prev
-		for i := -1; i > index; i-- {
-			node = node.Prev
-		}
-	} else {
-		if index >= l.Len {
-			return nil
-		}
+		index = len + index
+	}
+
+	if index >= len || index < 0 {
+		return nil
+	}
+
+	// Choose direction based on which is closer
+	if index <= len/2 {
+		// Search from head
 		node = l.Head.Next
 		for i := 0; i < index; i++ {
 			node = node.Next
+		}
+	} else {
+		// Search from tail
+		node = l.Tail.Prev
+		for i := len - 1; i > index; i-- {
+			node = node.Prev
 		}
 	}
 	return node
@@ -60,18 +79,18 @@ func (l *List) LPush(val []byte) {
 	node := &ListNode{Prev: l.Head, Next: l.Head.Next, Val: val}
 	l.Head.Next = node
 	node.Next.Prev = node
-	l.Len++
+	atomic.AddInt64(&l.len, 1)
 }
 
 func (l *List) RPush(val []byte) {
 	node := &ListNode{Prev: l.Tail.Prev, Next: l.Tail, Val: val}
 	l.Tail.Prev = node
 	node.Prev.Next = node
-	l.Len++
+	atomic.AddInt64(&l.len, 1)
 }
 
 func (l *List) LPop() *ListNode {
-	if l.Len == 0 {
+	if l.Len() == 0 {
 		return nil
 	}
 	node := l.Head.Next
@@ -79,12 +98,12 @@ func (l *List) LPop() *ListNode {
 	node.Next.Prev = l.Head
 	node.Prev = nil
 	node.Next = nil
-	l.Len--
+	atomic.AddInt64(&l.len, -1)
 	return node
 }
 
 func (l *List) RPop() *ListNode {
-	if l.Len == 0 {
+	if l.Len() == 0 {
 		return nil
 	}
 	node := l.Tail.Prev
@@ -92,43 +111,28 @@ func (l *List) RPop() *ListNode {
 	node.Prev.Next = l.Tail
 	node.Prev = nil
 	node.Next = nil
-	l.Len--
+	atomic.AddInt64(&l.len, -1)
 	return node
 }
 
 func (l *List) Set(index int, val []byte) bool {
-	if index < 0 {
-		if -index > l.Len {
-			return false
-		}
-		node := l.Tail
-		for node != l.Head && index < 0 {
-			node = node.Prev
-			index++
-		}
-		node.Val = val
-	} else {
-		if index >= l.Len {
-			return false
-		}
-		node := l.Head
-		for node != l.Tail && index >= 0 {
-			node = node.Next
-			index--
-		}
-		node.Val = val
+	node := l.Index(index)
+	if node == nil {
+		return false
 	}
+	node.Val = val
 	return true
 }
 
 func (l *List) Range(start, end int) [][]byte {
+	len := l.Len()
 	if start < 0 {
-		start = l.Len + start
+		start = len + start
 	}
 	if end < 0 {
-		end = l.Len + end
+		end = len + end
 	}
-	if start > end || start >= l.Len || end < 0 {
+	if start > end || start >= len || end < 0 {
 		return nil
 	}
 
@@ -136,17 +140,17 @@ func (l *List) Range(start, end int) [][]byte {
 		start = 0
 	}
 
-	if end >= l.Len {
-		end = l.Len - 1
+	if end >= len {
+		end = len - 1
 	}
 
 	res := make([][]byte, 0, end-start+1)
-	node := l.Head
-	for i := 0; i <= end; i++ {
-		node = node.Next
+	node := l.Head.Next
+	for i := 0; i <= end && node != l.Tail; i++ {
 		if i >= start {
 			res = append(res, node.Val)
 		}
+		node = node.Next
 	}
 	return res
 }
@@ -160,6 +164,7 @@ func (l *List) InsertBefore(val []byte, tar []byte) int {
 			node := &ListNode{Prev: now.Prev, Next: now, Val: val}
 			now.Prev = node
 			node.Prev.Next = node
+			atomic.AddInt64(&l.len, 1)
 			break
 		}
 		pos++
@@ -179,6 +184,7 @@ func (l *List) InsertAfter(val []byte, tar []byte) int {
 			node := &ListNode{Prev: now, Next: now.Next, Val: val}
 			now.Next = node
 			node.Next.Prev = node
+			atomic.AddInt64(&l.len, 1)
 			break
 		}
 		pos++
@@ -193,12 +199,13 @@ func (l *List) InsertAfter(val []byte, tar []byte) int {
 // return the number of elements removed.
 // if count>0, remove from head to tail, otherwise remove from tail to head
 func (l *List) RemoveElement(val []byte, count int) int {
-	if l.Len == 0 {
+	len := l.Len()
+	if len == 0 {
 		return 0
 	}
 
 	if count == 0 {
-		count = l.Len - 1
+		count = len
 	}
 
 	removed := 0
@@ -212,6 +219,7 @@ func (l *List) RemoveElement(val []byte, count int) int {
 				now.Prev = nil
 				now.Next = nil
 				removed++
+				atomic.AddInt64(&l.len, -1)
 				now = tem
 			} else {
 				now = now.Next
@@ -226,6 +234,7 @@ func (l *List) RemoveElement(val []byte, count int) int {
 				now.Prev = nil
 				now.Next = nil
 				removed++
+				atomic.AddInt64(&l.len, -1)
 				now = tem
 			} else {
 				now = now.Prev
@@ -236,16 +245,17 @@ func (l *List) RemoveElement(val []byte, count int) int {
 }
 
 func (l *List) Trim(start, end int) {
-	if l.Len == 0 {
+	len := l.Len()
+	if len == 0 {
 		return
 	}
 	if start < 0 {
-		start = l.Len + start
+		start = len + start
 	}
 	if end < 0 {
-		end = l.Len + end
+		end = len + end
 	}
-	if start > end || start >= l.Len || end < 0 {
+	if start > end || start >= len || end < 0 {
 		l.Clear()
 		return
 	}
@@ -254,8 +264,8 @@ func (l *List) Trim(start, end int) {
 		start = 0
 	}
 
-	if end >= l.Len {
-		end = l.Len - 1
+	if end >= len {
+		end = len - 1
 	}
 
 	var startNode, endNode *ListNode
@@ -286,11 +296,11 @@ func (l *List) Trim(start, end int) {
 	startNode.Prev = l.Head
 	l.Tail.Prev = endNode
 	endNode.Next = l.Tail
-	l.Len = end - start + 1
+	atomic.StoreInt64(&l.len, int64(end-start+1))
 }
 
 func (l *List) Clear() {
-	if l.Len == 0 {
+	if l.Len() == 0 {
 		return
 	}
 
@@ -298,7 +308,7 @@ func (l *List) Clear() {
 	last := l.Tail.Prev
 	l.Head.Next = l.Tail
 	l.Tail.Prev = l.Head
-	l.Len = 0
+	atomic.StoreInt64(&l.len, 0)
 
 	//	 gc will remove the list
 	fist.Prev = nil
