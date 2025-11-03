@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/hsn0918/tinyredis/pkg/config"
-	"github.com/hsn0918/tinyredis/pkg/logger"
 	"io"
 	"testing"
+
+	"github.com/hsn0918/tinyredis/pkg/config"
+	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 func init() {
@@ -34,11 +35,11 @@ func TestParseBulkHeader(t *testing.T) {
 		err := parseBulkHeader(header, state)
 		if i < -1 {
 			if err == nil || state.bulkLen != 0 || state.multiLine {
-				t.Error(fmt.Sprintf("parseBulkHeader(%v) == %v, %v, %v | expect:  error, 0, false", header, err, state.bulkLen, state.multiLine))
+				t.Errorf("parseBulkHeader(%v) == %v, %v, %v | expect:  error, 0, false", header, err, state.bulkLen, state.multiLine)
 			}
 		} else {
 			if state.bulkLen != int64(i) || !state.multiLine || err != nil {
-				t.Error(fmt.Sprintf("parseBulkHeader(%v) == %v, %v, %v | expect:  nil, %d, true", header, err, state.bulkLen, state.multiLine, i))
+				t.Errorf("parseBulkHeader(%v) == %v, %v, %v | expect:  nil, %d, true", header, err, state.bulkLen, state.multiLine, i)
 			}
 		}
 	}
@@ -56,11 +57,11 @@ func TestParseArrayHeader(t *testing.T) {
 		err := parseArrayHeader(header, state)
 		if i < -1 {
 			if err == nil || state.arrayLen != 0 || state.inArray {
-				t.Error(fmt.Sprintf("parseArrayHeader(%v) == %v, %v, %v | expect:  error, 0, false", header, err, state.arrayLen, state.inArray))
+				t.Errorf("parseArrayHeader(%v) == %v, %v, %v | expect:  error, 0, false", header, err, state.arrayLen, state.inArray)
 			}
 		} else {
 			if err != nil || state.arrayLen != i || !state.inArray {
-				t.Error(fmt.Sprintf("parseArrayHeader(%v) == %v, %v, %v | expect:  nil, %d, true", header, err, state.arrayLen, state.inArray, i))
+				t.Errorf("parseArrayHeader(%v) == %v, %v, %v | expect:  nil, %d, true", header, err, state.arrayLen, state.inArray, i)
 			}
 		}
 	}
@@ -88,20 +89,20 @@ func TestParseSingleLine(t *testing.T) {
 	iMsg2 := []byte(":2a\r\n")
 	sRes, err := parseSingleLine(sMsg)
 	if !bytes.Equal(sRes.ToBytes(), sMsg) || sRes.(*StringData).data != "abc" || err != nil {
-		t.Error(fmt.Sprintf("parseSingleLine( %s ) error", string(sMsg)))
+		t.Errorf("parseSingleLine( %s ) error", string(sMsg))
 	}
 	eRes, err := parseSingleLine(eMsg)
 	if !bytes.Equal(eRes.ToBytes(), eMsg) || eRes.(*ErrorData).data != "err" || err != nil {
-		t.Error(fmt.Sprintf("parseSingleLine(%s) error.", string(eMsg)))
-		t.Error(fmt.Sprintf("get %v, %v, %v | expect:  nil, %v, err", err, eRes.ToBytes(), eRes.(*ErrorData).data, eMsg))
+		t.Errorf("parseSingleLine(%s) error.", string(eMsg))
+		t.Errorf("get %v, %v, %v | expect:  nil, %v, err", err, eRes.ToBytes(), eRes.(*ErrorData).data, eMsg)
 	}
 	iRes, err := parseSingleLine(iMsg)
 	if !bytes.Equal(iRes.ToBytes(), iMsg) || iRes.(*IntData).data != -20 || err != nil {
-		t.Error(fmt.Sprintf("parseSingleLine(%s) error", string(iMsg)))
+		t.Errorf("parseSingleLine(%s) error", string(iMsg))
 	}
 	iRes2, err := parseSingleLine(iMsg2)
 	if iRes2 != nil || err == nil {
-		t.Error(fmt.Sprintf("parseSingleLine(%s) error. Except nil and error, but get %v, %v", string(iMsg2), iRes2, err))
+		t.Errorf("parseSingleLine(%s) error. Except nil and error, but get %v, %v", string(iMsg2), iRes2, err)
 	}
 }
 
@@ -122,7 +123,7 @@ func TestReadLine(t *testing.T) {
 			}
 		}
 		if !bytes.Equal(line, data[(i-1)*6:i*6]) {
-			t.Error(fmt.Sprintf("readLine() == %v | expect: %v", line, data[(i-1)*6:i*6]))
+			t.Errorf("readLine() == %v | expect: %v", line, data[(i-1)*6:i*6])
 		}
 	}
 
@@ -136,7 +137,7 @@ func TestReadLine(t *testing.T) {
 		t.Error(err)
 	}
 	if !bytes.Equal(line, data[:len(data)-2]) {
-		t.Error(fmt.Sprintf("readLine() == %v | expect: %v", line, data[:len(data)-2]))
+		t.Errorf("readLine() == %v | expect: %v", line, data[:len(data)-2])
 	}
 	state.bulkLen = 0
 	line, err = readLine(reader, state)
@@ -144,7 +145,7 @@ func TestReadLine(t *testing.T) {
 		t.Error(err)
 	}
 	if !bytes.Equal(line, data[len(data)-2:]) {
-		t.Error(fmt.Sprintf("readLine() == %v | expect: %v", line, data[len(data)-2:]))
+		t.Errorf("readLine() == %v | expect: %v", line, data[len(data)-2:])
 	}
 }
 
@@ -196,11 +197,11 @@ func TestParseStream(t *testing.T) {
 		array := parseRes.Data.(*ArrayData)
 		if array.Data() != nil || !bytes.Equal(array.ToBytes(), []byte("*-1\r\n")) {
 			t.Error("parse nil array error: ")
-			t.Error(fmt.Sprintf("get %v, %v | expect: nil, %v", array.Data(), array.ToBytes(), []byte("*-1\r\n")))
+			t.Errorf("get %v, %v | expect: nil, %v", array.Data(), array.ToBytes(), []byte("*-1\r\n"))
 		}
 	}
 
-	//test 3: zero array
+	// test 3: zero array
 	data = []byte("*0\r\n")
 	reader = bytes.NewReader(data)
 	ch = ParseStream(reader)
@@ -214,7 +215,7 @@ func TestParseStream(t *testing.T) {
 		array := parseRes.Data.(*ArrayData)
 		if len(array.Data()) != 0 || !bytes.Equal(array.ToBytes(), []byte("*0\r\n")) {
 			t.Error("parse nil array error: ")
-			t.Error(fmt.Sprintf("get %v, %v | expect: 0, %v", len(array.Data()), array.ToBytes(), []byte("*0\r\n")))
+			t.Errorf("get %v, %v | expect: 0, %v", len(array.Data()), array.ToBytes(), []byte("*0\r\n"))
 		}
 	}
 
@@ -236,7 +237,7 @@ func TestParseStream(t *testing.T) {
 				data := intData.(*IntData)
 				if data.Data() != int64(i+1) || !bytes.Equal(data.ToBytes(), []byte(fmt.Sprintf(":%d\r\n", i+1))) {
 					t.Error("parse nested array error: ")
-					t.Error(fmt.Sprintf("get %v, %v | expect: %v, %v", data.Data(), data.ToBytes(), int64(i+1), []byte(fmt.Sprintf(":%d\r\n", i+1))))
+					t.Errorf("get %v, %v | expect: %v, %v", data.Data(), data.ToBytes(), int64(i+1), []byte(fmt.Sprintf(":%d\r\n", i+1)))
 				}
 			}
 		}
@@ -245,13 +246,13 @@ func TestParseStream(t *testing.T) {
 				if i == 0 {
 					data := v.(*StringData)
 					if data.Data() != "Hello" || !bytes.Equal(data.ToBytes(), []byte("+Hello\r\n")) {
-						t.Error(fmt.Sprintf("get %s, %v | expect: %s, %v", data.Data(), data.ToBytes(), "Hello", []byte("+Hello\r\n")))
+						t.Errorf("get %s, %v | expect: %s, %v", data.Data(), data.ToBytes(), "Hello", []byte("+Hello\r\n"))
 					}
 				}
 				if i == 1 {
 					data := v.(*ErrorData)
 					if data.Error() != "World" || !bytes.Equal(data.ToBytes(), []byte("-World\r\n")) {
-						t.Error(fmt.Sprintf("get %s, %v | expect: %s, %v", data.Error(), data.ToBytes(), "Hello", []byte("+Hello\r\n")))
+						t.Errorf("get %s, %v | expect: %s, %v", data.Error(), data.ToBytes(), "World", []byte("-World\r\n"))
 					}
 				}
 			}
@@ -275,17 +276,17 @@ func TestParseStream(t *testing.T) {
 		bulk := parseRes.Data.(*BulkData)
 		if k == 0 {
 			if !bytes.Equal(bulk.Data(), []byte("hello")) || !bytes.Equal(bulk.ToBytes(), []byte("$5\r\nhello\r\n")) {
-				t.Error(fmt.Sprintf("get %v, %v | expect: %v, %v", bulk.Data(), bulk.ToBytes(), []byte("hello"), []byte("$5\r\nhello\r\n")))
+				t.Errorf("get %v, %v | expect: %v, %v", bulk.Data(), bulk.ToBytes(), []byte("hello"), []byte("$5\r\nhello\r\n"))
 			}
 		}
 		if k == 1 {
 			if bulk.Data() != nil || !bytes.Equal(bulk.ToBytes(), []byte("$-1\r\n")) {
-				t.Error(fmt.Sprintf("get %v, %v | expect: nil, %v", bulk.Data(), bulk.ToBytes(), []byte("$-1\r\n")))
+				t.Errorf("get %v, %v | expect: nil, %v", bulk.Data(), bulk.ToBytes(), []byte("$-1\r\n"))
 			}
 		}
 		if k == 2 {
 			if !bytes.Equal(bulk.Data(), []byte("world")) || !bytes.Equal(bulk.ToBytes(), []byte("$5\r\nworld\r\n")) {
-				t.Error(fmt.Sprintf("get %v, %v | expect: %v, %v", bulk.Data(), bulk.ToBytes(), []byte("world"), []byte("$5\r\nworld\r\n")))
+				t.Errorf("get %v, %v | expect: %v, %v", bulk.Data(), bulk.ToBytes(), []byte("world"), []byte("$5\r\nworld\r\n"))
 			}
 		}
 		k++

@@ -1,100 +1,178 @@
-# 定义变量
-BINARY_NAME=tiny-redis
-DOCKER_IMAGE_NAME=tiny-redis:0.1
-COMPLETION_DIR=completion
-COMMIT_MESSAGE="Auto commit by Makefile"
+SHELL := /bin/bash
 
-# 默认目标
-all: build
+# --- Toolchain configuration -------------------------------------------------
+GO        ?= go
+GOFMT     ?= gofmt
+GOENV      = GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod
+GOFLAGS   ?=
+MODULE_CACHE_SENTINEL := $(CURDIR)/.cache/go-mod/.synced
 
-# 构建二进制文件
-build:
-	@echo "==> Building binary..."
-	@go build -o $(BINARY_NAME) ./cmd/tinyredis
+# --- Project layout ----------------------------------------------------------
+BINARY    := tinyredis
+PKG_MAIN  := ./cmd/tinyredis
+BUILD_DIR := bin
+BIN       := $(BUILD_DIR)/$(BINARY)
+PKGS      := ./...
 
-# 运行测试
-test:
-	@echo "==> Running tests..."
-	@go test ./...
+GOFILES := $(shell find . -name '*.go' -not -path './vendor/*' -not -path './.cache/*')
 
-# 清理构建文件
-clean:
-	@echo "==> Cleaning up..."
-	@rm -f $(BINARY_NAME)
-	@rm -rf $(COMPLETION_DIR)
+# --- Quality tooling ---------------------------------------------------------
+GOTEST_FLAGS ?= -race -timeout 60s
+BENCH_FLAGS  ?= -run=^$$ -bench=.
+LINT_CMD     ?= golangci-lint
+LINT_ARGS    ?= run ./...
+LINT_VERSION ?= v1.61.0
 
-# 构建 Docker 镜像
-docker-build:
-	@echo "==> Building Docker image..."
-	@docker build -t $(DOCKER_IMAGE_NAME) .
+# --- Docker settings ---------------------------------------------------------
+IMAGE     ?= tinyredis:latest
+CONTAINER ?= tinyredis
+DATA_DIR  ?= $(CURDIR)/data
 
-# 运行 Docker 容器
-docker-run:
-	@echo "==> Running Docker container..."
-	@docker run -d --name $(BINARY_NAME) -p 6379:6379 -v tinyredis-data:/data $(DOCKER_IMAGE_NAME)
+# --- Help --------------------------------------------------------------------
+.PHONY: help
+help: ## Show this help
+	@printf "Usage: make <target>\n\nTargets:\n"
+	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS=":.*##"} {printf "  %-20s %s\n", $$1, $$2}'
 
-# 停止 Docker 容器
-docker-stop:
-	@echo "==> Stopping Docker container..."
-	@docker stop $(BINARY_NAME) || true
-	@docker rm $(BINARY_NAME) || true
-
-# 生成命令行补全脚本并在当前会话中加载
-completion:
-	@echo "==> Generating completion scripts..."
-	@mkdir -p $(COMPLETION_DIR)
-	@if [ "$$0" = "-zsh" ] || [ "$$SHELL" = "/bin/zsh" ] || [ "$$SHELL" = "/usr/bin/zsh" ]; then \
-		echo "Detected zsh shell"; \
-		./$(BINARY_NAME) completion zsh > $(COMPLETION_DIR)/zsh_completion.sh; \
-		echo "Completion script for Zsh has been generated at $(COMPLETION_DIR)/zsh_completion.sh"; \
-		echo "To load it, run: source $(COMPLETION_DIR)/zsh_completion.sh"; \
-	elif [ "$$0" = "-bash" ] || [ "$$SHELL" = "/bin/bash" ] || [ "$$SHELL" = "/usr/bin/bash" ]; then \
-		echo "Detected bash shell"; \
-		./$(BINARY_NAME) completion bash > $(COMPLETION_DIR)/bash_completion.sh; \
-		echo "Completion script for Bash has been generated at $(COMPLETION_DIR)/bash_completion.sh"; \
-		echo "To load it, run: source $(COMPLETION_DIR)/bash_completion.sh"; \
-	else \
-		echo "Unsupported shell. Please use bash or zsh."; \
+# --- Build & Run -------------------------------------------------------------
+.PHONY: build
+build: ## Build the tinyredis binary
+	@rm -rf $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)
+	@if [ ! -f $(MODULE_CACHE_SENTINEL) ]; then \
+		echo "==> priming Go module cache"; \
+		rm -rf $(CURDIR)/.cache/go-mod; \
+		mkdir -p $(CURDIR)/.cache/go-mod; \
+		cp -a $$HOME/go/pkg/mod/. $(CURDIR)/.cache/go-mod >/dev/null 2>&1 || true; \
+		touch $(MODULE_CACHE_SENTINEL); \
 	fi
-# 运行应用程序
-run:
-	@echo "==> Running application..."
-	@./$(BINARY_NAME)
+	@echo "==> building $(BIN)"
+	@$(GOENV) $(GO) build $(GOFLAGS) -o $(BIN) $(PKG_MAIN)
 
-# Git 提交代码
-git-commit:
-	@echo "==> Committing changes..."
-	@git add .
-	@git commit -m "$(COMMIT_MESSAGE)"
+.PHONY: run
+run: build ## Run previously built binary
+	@$(BIN)
 
-# Git 拉取最新代码
-git-pull:
-	@echo "==> Pulling latest changes..."
-	@git pull
+.PHONY: run-dev
+run-dev: ## Run tinyredis via go run (no build artifacts)
+	@$(GOENV) $(GO) run $(GOFLAGS) $(PKG_MAIN)
 
-# Git 推送代码到远程仓库
-git-push:
-	@echo "==> Pushing changes to remote..."
-	@git push
+# --- Testing & Verification --------------------------------------------------
+.PHONY: test
+test: ## Run unit tests with race detector
+	@$(GOENV) $(GO) test $(GOFLAGS) $(GOTEST_FLAGS) $(PKGS)
 
-# 打印帮助信息
-help:
-	@echo "Usage: make [target]"
-	@echo ""
-	@echo "Targets:"
-	@echo "  all           Default target, builds the binary."
-	@echo "  build         Builds the binary."
-	@echo "  test          Runs tests."
-	@echo "  clean         Cleans up build files."
-	@echo "  docker-build  Builds the Docker image."
-	@echo "  docker-run    Runs the Docker container."
-	@echo "  docker-stop   Stops the Docker container."
-	@echo "  completion    Generates shell completion scripts."
-	@echo "  run           Runs the application."
-	@echo "  git-commit    Commits all changes with a default message."
-	@echo "  git-pull      Pulls latest changes from the remote repository."
-	@echo "  git-push      Pushes changes to the remote repository."
-	@echo "  help          Prints this help message."
+.PHONY: test-short
+test-short: ## Run short tests without race detector
+	@$(GOENV) $(GO) test $(GOFLAGS) -short $(PKGS)
 
-# 声明伪目标
-.PHONY: all build test clean docker-build docker-run docker-stop completion run git-commit git-pull git-push help
+.PHONY: bench
+bench: ## Run benchmarks for the project
+	@$(GOENV) $(GO) test $(GOFLAGS) $(BENCH_FLAGS) $(PKGS)
+
+.PHONY: test-leader-transfer
+test-leader-transfer: ## Run the Raft leader failover integration test
+	@$(GOENV) $(GO) test $(GOFLAGS) ./pkg/cluster -run TestLeaderFailoverTransfersLeadership -count=1
+
+.PHONY: lint
+lint: ## Run golangci-lint (installs if missing)
+	@if ! command -v $(LINT_CMD) >/dev/null 2>&1; then \
+		echo "Installing $(LINT_CMD) $(LINT_VERSION)"; \
+		$(GOENV) $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION); \
+	fi
+	@$(GOENV) $(LINT_CMD) $(LINT_ARGS)
+
+.PHONY: fmt
+fmt: ## Format Go source files in-place
+	@$(GOFMT) -w $(GOFILES)
+
+.PHONY: fmt-check
+fmt-check: ## Check that Go files are formatted
+	@fmt_out=$$($(GOFMT) -l $(GOFILES)); \
+	if [ -n "$$fmt_out" ]; then \
+		echo "Go files need formatting:"; \
+		echo "$$fmt_out"; \
+		exit 1; \
+	fi
+
+.PHONY: tidy
+tidy: ## Run go mod tidy
+	@$(GOENV) $(GO) mod tidy
+
+.PHONY: vet
+vet: ## Run go vet on the codebase
+	@$(GOENV) $(GO) vet $(PKGS)
+
+.PHONY: ci
+ci: fmt-check lint test ## Run formatting check, lint, and tests
+
+# --- Docker ------------------------------------------------------------------
+.PHONY: docker-build
+docker-build: ## Build docker image
+	@docker build -t $(IMAGE) .
+
+.PHONY: docker-run
+docker-run: docker-build ## Run docker container locally
+	@docker run -d --rm --name $(CONTAINER) \
+		-p 6379:6379 \
+		-v $(DATA_DIR)/node1:/data \
+		$(IMAGE) \
+		./tinyredis --host 0.0.0.0 --node-id node-1 \
+		--raft-dir /data --raft-bind 0.0.0.0:7000 --raft-http 0.0.0.0:17000 --raft-bootstrap
+
+.PHONY: docker-stop
+docker-stop: ## Stop the running docker container (if present)
+	@docker stop $(CONTAINER) >/dev/null 2>&1 || true
+
+.PHONY: docker-shell
+docker-shell: ## Open an interactive shell inside the container
+	@docker exec -it $(CONTAINER) /bin/sh
+
+# --- Convenience targets -----------------------------------------------------
+BOOTSTRAP_HOST ?= 127.0.0.1
+BOOTSTRAP_PORT ?= 6379
+BOOTSTRAP_NODE ?= node-1
+BOOTSTRAP_DIR  ?= $(CURDIR)/data/$(BOOTSTRAP_NODE)
+BOOTSTRAP_RAFT ?= 127.0.0.1:7000
+BOOTSTRAP_HTTP ?= 127.0.0.1:17000
+
+.PHONY: bootstrap
+bootstrap: build ## Start a bootstrap node with sensible defaults
+	@mkdir -p $(BOOTSTRAP_DIR)
+	@$(BIN) \
+		--host $(BOOTSTRAP_HOST) --port $(BOOTSTRAP_PORT) \
+		--node-id $(BOOTSTRAP_NODE) \
+		--raft-dir $(BOOTSTRAP_DIR) \
+		--raft-bind $(BOOTSTRAP_RAFT) \
+		--raft-http $(BOOTSTRAP_HTTP) \
+		--raft-bootstrap
+
+JOIN_NODE   ?= node-2
+JOIN_PORT   ?= 6380
+JOIN_RAFT   ?= 127.0.0.1:7001
+JOIN_HTTP   ?= 127.0.0.1:17001
+JOIN_DIR    ?= $(CURDIR)/data/$(JOIN_NODE)
+JOIN_TARGET ?= 127.0.0.1:17000
+
+.PHONY: join
+join: build ## Start a follower node and join an existing leader
+	@mkdir -p $(JOIN_DIR)
+	@$(BIN) \
+		--host 127.0.0.1 --port $(JOIN_PORT) \
+		--node-id $(JOIN_NODE) \
+		--raft-dir $(JOIN_DIR) \
+		--raft-bind $(JOIN_RAFT) \
+		--raft-http $(JOIN_HTTP) \
+		--raft-join $(JOIN_TARGET)
+
+# --- Cleanup -----------------------------------------------------------------
+.PHONY: clean
+clean: ## Remove build artifacts
+	@rm -rf $(BUILD_DIR)
+
+.PHONY: clean-cache
+clean-cache: ## Remove Go build cache used by make
+	@rm -rf .cache
+
+.PHONY: clean-all
+clean-all: clean clean-cache ## Remove build artifacts and Go caches

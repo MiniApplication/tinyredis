@@ -14,8 +14,9 @@ const (
 type zSetNode struct {
 	member  string
 	score   float64
-	forward []*zSetNode
-	span    []int // 每层的跨度，用于计算排名
+	level   int
+	forward [MaxLevel]*zSetNode
+	span    [MaxLevel]int // 每层的跨度，用于计算排名
 }
 
 // ZSet 有序集合，使用跳表+哈希表实现
@@ -27,18 +28,17 @@ type ZSet struct {
 	dict   map[string]float64
 }
 
-func NewZSetNode(level int, member string, score float64) *zSetNode {
+func newZSetNode(level int, member string, score float64) *zSetNode {
 	return &zSetNode{
-		member:  member,
-		score:   score,
-		forward: make([]*zSetNode, level),
-		span:    make([]int, level),
+		member: member,
+		score:  score,
+		level:  level,
 	}
 }
 
 func NewZSet() *ZSet {
 	return &ZSet{
-		header: NewZSetNode(MaxLevel, "", 0),
+		header: newZSetNode(MaxLevel, "", 0),
 		tail:   nil,
 		level:  1,
 		length: 0,
@@ -95,7 +95,7 @@ func (z *ZSet) Add(member string, score float64) bool {
 		z.level = newLevel
 	}
 
-	newNode := NewZSetNode(newLevel, member, score)
+	newNode := newZSetNode(newLevel, member, score)
 	for i := 0; i < newLevel; i++ {
 		newNode.forward[i] = update[i].forward[i]
 		update[i].forward[i] = newNode

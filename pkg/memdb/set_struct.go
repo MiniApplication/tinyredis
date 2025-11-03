@@ -1,15 +1,12 @@
 package memdb
 
-import (
-	"math/rand"
-	"sync/atomic"
-)
+import "math/rand"
 
 type void struct{}
 
 type Set struct {
 	table map[string]void
-	size  int64 // Atomic counter for thread-safe size tracking
+	size  int
 }
 
 func NewSet() *Set {
@@ -24,21 +21,21 @@ func (s *Set) Add(key string) int {
 		return 0
 	}
 	s.table[key] = void{}
-	atomic.AddInt64(&s.size, 1)
+	s.size++
 	return 1
 }
 
 func (s *Set) Remove(key string) int {
 	if _, exists := s.table[key]; exists {
 		delete(s.table, key)
-		atomic.AddInt64(&s.size, -1)
+		s.size--
 		return 1
 	}
 	return 0
 }
 
 func (s *Set) Len() int {
-	return int(atomic.LoadInt64(&s.size))
+	return s.size
 }
 
 func (s *Set) Has(key string) bool {
@@ -63,7 +60,7 @@ func (s *Set) Clear() {
 			delete(s.table, k)
 		}
 	}
-	atomic.StoreInt64(&s.size, 0)
+	s.size = 0
 }
 
 func (s *Set) Members() []string {
@@ -90,13 +87,13 @@ func (s *Set) Union(sets ...*Set) *Set {
 	for key := range s.table {
 		res.table[key] = void{}
 	}
-	res.size = int64(len(res.table))
+	res.size = len(res.table)
 
 	for _, set := range sets {
 		for key := range set.table {
 			if _, exists := res.table[key]; !exists {
 				res.table[key] = void{}
-				atomic.AddInt64(&res.size, 1)
+				res.size++
 			}
 		}
 	}
@@ -107,7 +104,7 @@ func (s *Set) Intersect(sets ...*Set) *Set {
 	if len(sets) == 0 {
 		res := &Set{
 			table: make(map[string]void, len(s.table)),
-			size:  int64(len(s.table)),
+			size:  len(s.table),
 		}
 		for key := range s.table {
 			res.table[key] = void{}
@@ -148,7 +145,7 @@ func (s *Set) Intersect(sets ...*Set) *Set {
 
 		if exists {
 			res.table[key] = void{}
-			atomic.AddInt64(&res.size, 1)
+			res.size++
 		}
 	}
 	return res
@@ -212,9 +209,6 @@ func (s *Set) Random(count int) []string {
 		// Return with possible duplicates
 		count = -count
 		members := s.Members()
-		if size == 0 {
-			return []string{}
-		}
 
 		res := make([]string, count)
 		for i := 0; i < count; i++ {

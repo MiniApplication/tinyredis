@@ -36,7 +36,7 @@ func (l *Locks) GetKeyPos(key string) int {
 func (l *Locks) Lock(key string) {
 	pos := l.GetKeyPos(key)
 	if pos == -1 {
-		logger.Error("Locks Lock key %s error: pos == -1", key)
+		logger.Errorf("Locks Lock key %s error: pos == -1", key)
 		return
 	}
 	l.locks[pos].Lock()
@@ -44,21 +44,21 @@ func (l *Locks) Lock(key string) {
 func (l *Locks) UnLock(key string) {
 	pos := l.GetKeyPos(key)
 	if pos == -1 {
-		logger.Error("Locks UnLock key %s error: pos == -1", key)
+		logger.Errorf("Locks UnLock key %s error: pos == -1", key)
 	}
 	l.locks[pos].Unlock()
 }
 func (l *Locks) RLock(key string) {
 	pos := l.GetKeyPos(key)
 	if pos == -1 {
-		logger.Error("Locks RLock key %s error: pos == -1", key)
+		logger.Errorf("Locks RLock key %s error: pos == -1", key)
 	}
 	l.locks[pos].RLock()
 }
 func (l *Locks) RUnLock(key string) {
 	pos := l.GetKeyPos(key)
 	if pos == -1 {
-		logger.Error("Locks RUnLock key %s error: pos == -1", key)
+		logger.Errorf("Locks RUnLock key %s error: pos == -1", key)
 	}
 	l.locks[pos].RUnlock()
 }
@@ -67,16 +67,14 @@ func (l *Locks) sortedLockPoses(keys []string) []int {
 	for _, key := range keys {
 		pos := l.GetKeyPos(key)
 		if pos == -1 {
-			logger.Error("Locks Lock key %s error: pos == -1", key)
+			logger.Errorf("Locks Lock key %s error: pos == -1", key)
 			return nil
 		}
 		set[pos] = struct{}{}
 	}
-	poses := make([]int, len(set))
-	i := 0
-	for pos := range poses {
-		poses[i] = pos
-		i++
+	poses := make([]int, 0, len(set))
+	for pos := range set {
+		poses = append(poses, pos)
 	}
 	sort.Ints(poses)
 	return poses

@@ -111,7 +111,7 @@ func expireKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 
 	v, err := strconv.ParseInt(string(cmd[2]), 10, 64)
 	if err != nil {
-		logger.Error("expireKey Function: cmd[2] %s is not int", string(cmd[2]))
+		logger.Errorf("expireKey Function: cmd[2] %s is not int", string(cmd[2]))
 		return RESP.MakeErrorData(fmt.Sprintf("error: %s is not int", string(cmd[2])))
 	}
 	ttl := time.Now().Unix() + v
@@ -127,26 +127,27 @@ func expireKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	m.locks.Lock(key)
 	defer m.locks.UnLock(key)
 	var res int
+	currentExpire, hasTTL := m.ttl.ExpireAt(key)
 	switch opt {
 	case "nx":
-		if _, exists := m.ttl.keyMap[key]; !exists {
+		if !hasTTL {
 			res = m.SetTTL(key, ttl)
 		}
 	case "xx":
-		if _, exists := m.ttl.keyMap[key]; exists {
+		if hasTTL {
 			res = m.SetTTL(key, ttl)
 		}
 	case "gt":
-		if item, exists := m.ttl.keyMap[key]; exists && ttl > item.expireAt {
+		if hasTTL && ttl > currentExpire {
 			res = m.SetTTL(key, ttl)
 		}
 	case "lt":
-		if item, exists := m.ttl.keyMap[key]; exists && ttl < item.expireAt {
+		if hasTTL && ttl < currentExpire {
 			res = m.SetTTL(key, ttl)
 		}
 	default:
 		if opt != "" {
-			logger.Error("expireKey Function: opt %s is not nx, xx, gt or lt", opt)
+			logger.Errorf("expireKey Function: opt %s is not nx, xx, gt or lt", opt)
 			return RESP.MakeErrorData(fmt.Sprintf("error: unsupport %s, except nx, xx, gt, lt", opt))
 		}
 		res = m.SetTTL(key, ttl)
@@ -182,12 +183,12 @@ func ttlKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	}
 
 	// 获取 TTL 信息
-	ttlItem, exists := m.ttl.keyMap[key]
+	expireAt, exists := m.ttl.ExpireAt(key)
 	if !exists {
 		return RESP.MakeIntData(int64(-1))
 	}
 	now := time.Now().Unix()
-	return RESP.MakeIntData(ttlItem.expireAt - now)
+	return RESP.MakeIntData(expireAt - now)
 }
 
 func typeKey(m *MemDb, cmd [][]byte) RESP.RedisData {

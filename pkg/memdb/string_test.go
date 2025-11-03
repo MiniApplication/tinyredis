@@ -38,9 +38,9 @@ func TestSetString(t *testing.T) {
 	}
 
 	// 检查 TTL 是否正确设置
-	if ttlItem, exists := mem.ttl.keyMap["a"]; !exists ||
-		ttlItem.expireAt-time.Now().Unix() > 100 ||
-		ttlItem.expireAt-time.Now().Unix() < 99 {
+	if expireAt, exists := mem.ttl.ExpireAt("a"); !exists ||
+		expireAt-time.Now().Unix() > 100 ||
+		expireAt-time.Now().Unix() < 99 {
 		t.Error("set ttl error")
 	}
 
@@ -51,7 +51,7 @@ func TestSetString(t *testing.T) {
 	}
 
 	// 检查 keepttl 是否正确保持了 TTL
-	if _, exists := mem.ttl.keyMap["a"]; !exists {
+	if _, exists := mem.ttl.ExpireAt("a"); !exists {
 		t.Error("set keepttl error")
 	}
 }

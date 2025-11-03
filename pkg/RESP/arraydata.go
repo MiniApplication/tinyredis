@@ -26,16 +26,26 @@ func (a *ArrayData) Data() []RedisData {
 	return a.data
 }
 func (a *ArrayData) ToCommand() [][]byte {
-	res := make([][]byte, 0)
+	res := make([][]byte, 0, len(a.data))
 	for _, v := range a.data {
 		res = append(res, v.ByteData())
 	}
 	return res
 }
 func (a *ArrayData) ByteData() []byte {
-	res := make([]byte, 0)
-	for _, v := range a.data {
-		res = append(res, v.ByteData()...)
+	if len(a.data) == 0 {
+		return []byte{}
+	}
+	total := 0
+	parts := make([][]byte, len(a.data))
+	for i, v := range a.data {
+		raw := v.ByteData()
+		parts[i] = raw
+		total += len(raw)
+	}
+	res := make([]byte, 0, total)
+	for _, p := range parts {
+		res = append(res, p...)
 	}
 	return res
 }

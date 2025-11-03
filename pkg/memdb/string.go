@@ -164,7 +164,6 @@ func setRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 		return RESP.MakeErrorData("error: offset is not a integer or less than 0")
 	}
 	var oldVal []byte
-	var newVal []byte
 	key := string(cmd[1])
 	m.CheckTTL(key)
 	m.locks.Lock(key)
@@ -178,16 +177,13 @@ func setRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 			return RESP.MakeErrorData("WRONGTYPE Operation against a key holding the wrong kind of value")
 		}
 	}
-	if offset > len(oldVal) {
-		newVal = oldVal
-		for i := 0; i < offset-len(oldVal); i++ {
-			newVal = append(newVal, byte(0))
-		}
-		newVal = append(newVal, cmd[3]...)
-	} else {
-		newVal = oldVal[:offset]
-		newVal = append(newVal, cmd[3]...)
+	requiredLen := offset + len(cmd[3])
+	if requiredLen < len(oldVal) {
+		requiredLen = len(oldVal)
 	}
+	newVal := make([]byte, requiredLen)
+	copy(newVal, oldVal)
+	copy(newVal[offset:], cmd[3])
 	m.db.Set(key, newVal)
 	return RESP.MakeIntData(int64(len(newVal)))
 }
@@ -222,20 +218,29 @@ func getRangeString(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if err != nil {
 		return RESP.MakeErrorData("error: commands is invalid")
 	}
+	length := len(byteVal)
+	if length == 0 {
+		return RESP.MakeBulkData([]byte{})
+	}
 	if start < 0 {
-		start = len(byteVal) + start
+		start = length + start
 	}
 	if end < 0 {
-		end = len(byteVal) + end
-	}
-	end = end + 1
-	if start > end || start >= len(byteVal) || end < 0 {
-		return RESP.MakeBulkData([]byte{})
+		end = length + end
 	}
 	if start < 0 {
 		start = 0
 	}
-	return RESP.MakeBulkData(byteVal[start:end])
+	if start > length {
+		return RESP.MakeBulkData([]byte{})
+	}
+	if end >= length {
+		end = length - 1
+	}
+	if end < start {
+		return RESP.MakeBulkData([]byte{})
+	}
+	return RESP.MakeBulkData(byteVal[start : end+1])
 }
 
 func mSetString(m *MemDb, cmd [][]byte) RESP.RedisData {

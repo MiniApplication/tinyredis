@@ -1,20 +1,25 @@
 package util
 
-import "github.com/spaolacci/murmur3"
+import (
+	"math"
+	"strconv"
+
+	"github.com/spaolacci/murmur3"
+)
 
 // HashKey hashes a string to an int value using MurmurHash3 algorithm
 func HashKey(key string) int {
 	const seed uint32 = 0x1234ABCD
 	hash := murmur3.Sum64WithSeed([]byte(key), seed)
 
-	hash ^= hash >> 32
-	hash *= 0xc6a4a7935bd1e995
-	hash ^= hash >> 47
+	hash ^= hash >> 33
+	hash *= 0xff51afd7ed558ccd
+	hash ^= hash >> 33
 
-	if hash < 0 {
-		return int(-hash)
+	if strconv.IntSize == 32 {
+		return int(uint32(hash))
 	}
-	return int(hash)
+	return int(hash & math.MaxInt64)
 }
 
 // PatternMatch matches a string with a wildcard pattern.
@@ -64,7 +69,6 @@ func PatternMatch(pattern, src string) bool {
 			return false
 		case '?':
 			srcPos++
-			break
 		case '[':
 			var not, match, closePat bool
 			patPos++
@@ -114,7 +118,6 @@ func PatternMatch(pattern, src string) bool {
 				return false
 			}
 			srcPos++
-			break
 		case '\\':
 			//	escape special character in pattern and fall through to default to handle
 			if patPos+1 < patLen {
@@ -128,7 +131,6 @@ func PatternMatch(pattern, src string) bool {
 				return false
 			}
 			srcPos++
-			break
 		}
 		patPos++
 		// When src has been consumed, pattern must be consumed to the end or only contains '*' in last

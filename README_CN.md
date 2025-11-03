@@ -1,295 +1,210 @@
 # tiny-redis
-[中文](./README_CN.md)
-[EN](./README.md)
-## tiny-redis 是一个由 Go 编写的高性能独立缓存服务器(持久化)。它实现了完整的 RESP（Redis 序列化协议），因此支持所有的 Redis 客户端。
-## 特点
-*支持基于 RESP 协议的所有客户端。
-*支持字符串、列表、集合、哈希数据类型。
-*支持 TTL（键-值对将在 TTL 后被删除）。
-*完全内存存储。
-*支持一些需要的原子操作命令（如 INCR、DECR、INCRBY、MSET、SMOVE 等）。
 
-## 使用 Docker 快速开始
+[English](./README.md)
 
-### 构建 Docker 镜像
+`tiny-redis` 是一个使用 Go 开发的 Redis 协议兼容缓存服务器。它在内存中存储数据，使用 BoltDB 持久化 Raft 元数据，并通过 Raft 完成多节点复制和故障切换。
 
-~~~shell
-$ git clone https://github.com/HSn0918/tinyredis
-$ cd tinyredis
-$ docker build -t tiny-redis:0.1 .
-~~~
+---
 
-### 启动
+## 核心特性
 
-值得注意的是，我们已经在 `/data` 目录为你准备好了 `redis-cli` 命令行工具方便你调试使用。
+- **RESP 协议兼容**：支持 `redis-cli`、Medis、AnotherRedisDesktopManager 等客户端。
+- **丰富的数据结构**：字符串、哈希、列表、集合、有序集合、TTL 等常用命令。
+- **Raft 集群**：自动选主，日志复制，持久化 `raft-log.bolt`、`raft-stable.bolt` 与快照。
+- **日志系统**：基于 Go 1.21 `log/slog`，支持 JSON 文件输出与日志采样。
+- **灵活配置**：命令行参数或配置文件，支持热插拔节点。
 
-由于项目未做数据持久化，所以即使你挂载了 `/data` 目录也只能得到一些日志文件，以及 `tiny-redis`，`redis-cli`。
+---
 
-~~~shell
-$ docker run -d \
-  --name tiny-redis \
+## 环境要求
+
+- Go 1.23+
+- macOS / Linux（Windows 可通过 WSL2）
+- Docker（可选）
+
+---
+
+## 单节点启动
+
+```bash
+# 克隆仓库并编译
+git clone https://github.com/HSn0918/tinyredis
+cd tinyredis
+make build
+
+# 启动单节点
+./bin/tinyredis \
+  --host 127.0.0.1 --port 6379 \
+  --node-id node-1 \
+  --raft-dir ./data/node1 \
+  --raft-bind 127.0.0.1:7000 \
+  --raft-http 127.0.0.1:17000 \
+  --raft-bootstrap
+```
+
+然后可通过 `redis-cli` 连接验证：
+
+```bash
+redis-cli -p 6379 ping
+```
+
+> 数据存储在内存中；Raft 状态保存在 `./data/node1/`。
+
+---
+
+## 多节点集群
+
+### 1. 引导第一个节点
+
+```bash
+./bin/tinyredis \
+  --host 127.0.0.1 --port 6379 \
+  --node-id node-1 \
+  --raft-dir ./data/node1 \
+  --raft-bind 127.0.0.1:7000 \
+  --raft-http 127.0.0.1:17000 \
+  --raft-bootstrap
+```
+等待日志显示成为 leader。
+
+### 2. 新节点加入集群
+
+每个新节点需要空的 `raft-dir`，并在启动时指定 `--raft-join` 指向 leader 的 HTTP 地址：
+
+```bash
+./bin/tinyredis \
+  --host 127.0.0.1 --port 6380 \
+  --node-id node-2 \
+  --raft-dir ./data/node2 \
+  --raft-bind 127.0.0.1:7001 \
+  --raft-http 127.0.0.1:17001 \
+  --raft-join 127.0.0.1:17000
+```
+
+按同样方式启动 node-3 等更多节点。
+
+### 3. 重启已有节点
+
+- 保留原来的 `--node-id`、`--raft-dir`、`--raft-bind`、`--raft-http`。
+- **不要**再使用 `--raft-join` 或 `--raft-bootstrap`。
+- 先启动之前的 leader，再启动其他节点。
+
+### 4. 新增全新的节点
+
+- 为新节点准备独立目录。
+- 启动时使用 `--raft-join` 指向当前 leader。
+
+### 自动故障转移代理（实验特性）
+
+如果希望客户端始终连接当前的 leader，可运行内置的轻量级代理：
+
+```bash
+./bin/tinyredis failover-proxy \
+  --listen 127.0.0.1:7390 \
+  --nodes 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
+```
+
+代理会轮询指定节点，使用 `INFO replication` 判断谁是 leader，并把进入代理的连接转发到该节点。leader 发生切换时，代理会在下次连接建立时自动跳转。  
+（如果客户端本身支持自动重连，例如 `redis-cli` 默认行为，断开后会自动连回代理，从而连到新的 leader。）
+
+> 新版 `INFO replication` 会输出 `role`、`leader_id`、`leader_raft_addr`、`known_peers` 等字段，可用于快速定位 leader 与集群状态。
+
+---
+
+## 常见命令行参数
+
+| 参数 | 描述 |
+|------|------|
+| `--host`, `--port` | RESP 服务监听地址与端口。 |
+| `--node-id` | 唯一的 Raft 节点 ID。 |
+| `--raft-dir` | Raft 数据目录（log/stable/snapshot）。 |
+| `--raft-bind` | Raft 复制通信地址。 |
+| `--raft-http` | 接受 `join` 请求的 HTTP 地址。 |
+| `--raft-join` | 指定 leader 的 `host:port` 加入集群。 |
+| `--raft-bootstrap` | 初始化新集群（仅首次使用）。 |
+| `--logdir` | JSON 日志输出目录。 |
+| `--loglevel` | `debug`/`info`/`warn`/`error`。 |
+| `--log-sampling` | 是否开启日志采样（默认开启）。 |
+
+使用 `./bin/tinyredis --help` 查看全部选项。
+
+---
+
+## Docker 快速体验
+
+```bash
+make docker-build
+docker run -d --rm \
+  --name tinyredis \
   -p 6379:6379 \
-  -v tinyredis-data:/data\
-  tiny-redis:0.1
-~~~
-
-## 从源码构建
-go1.20+ 
-```bash
-$ go build -o tiny-redis 
-```
-启动tiny-redis服务:
-```bash
-$ ./tiny-redis
-```
-使用启动选项命令或配置文件来更改默认设置：
-```bash 
-$ ./tiny-redis -h
-A tiny Redis server
-
-Usage:
-  tiny-redis [flags]
-  tiny-redis [command]
-
-Available Commands:
-  completion  Generate completion script
-  help        Help about any command
-
-Flags:
-  -c, --config string     Appoint a config file: such as /etc/redis.conf
-  -h, --help              help for tiny-redis
-  -H, --host string       Bind host ip: default is 127.0.0.1 (default "0.0.0.0")
-  -d, --logdir string     Set log directory: default is /tmp (default "./")
-  -l, --loglevel string   Set log level: default is info (default "info")
-  -p, --port int          Bind a listening port: default is 6379 (default 6379)
-
-Use "tiny-redis [command] --help" for more information about a command.
-```
-使用cobra提供的自动补全功能(当前会话生效)
-
-```sh
-$ ./tiny-redis completion zsh > _tiny-redis_completion
-$ source _tiny-redis_completion
+  -v $PWD/data/node1:/data \
+  tinyredis:latest \
+  ./tinyredis --host 0.0.0.0 --node-id node-1 \
+  --raft-dir /data --raft-bind 0.0.0.0:7000 --raft-http 0.0.0.0:17000 --raft-bootstrap
 ```
 
+多节点部署可使用多个容器或 docker-compose，每个节点需要不同的端口与数据卷。
 
+---
 
-## 任何 Redis 客户端都可以与 tiny-redis 服务器通信。
+## 日志说明
 
->目前支持图形化客户端:Medis、AnotherRedisDesktopManager。然而需要注意的是，这些客户端中显示的关于服务端的信息可能并不是准确的
+- 默认以文本格式输出到 stdout。
+- 指定 `--logdir` 后，会在目录下生成 JSON 格式的 `redis.log`。
+- `--log-sampling-*` 控制重复日志的采样，可关闭以获得完整日志。
 
-例如，可以使用 redis-cli 与 tiny-redis 服务器通信：
+---
 
-```sh
-# start a tiny-redis server listening at 6379 port
-$ ./tiny-redis 
-[info][server.go:25] 2023/09/17 00:55:35 [Server Listen at 127.0.0.1:6379]
-[info][server.go:35] 2023/09/17 00:55:40 [127.0.0.1:7810  connected]
-```
-
-
+## 测试与质量
 
 ```bash
-# use redis-cli
-$ redis-cli
-127.0.0.1:6379> PING
-PONG
-127.0.0.1:6379> MSET key1 a key2 b
-OK
-127.0.0.1:6379> MGET key1 key2 nonekey
-1) "a"
-2) "b"
-3) ""
-127.0.0.1:6379> RPUSH list1 1 2 3 4 5
-(integer) 5
-127.0.0.1:6379> LRANGE list1 0 -1
-1) "1"
-2) "2"
-3) "3"
-4) "4"
-5) "5"
-127.0.0.1:6379> TYPE list1
-list
-127.0.0.1:6379> EXPIRE list1 100
-(integer) 1
-127.0.0.1:6379> TTL list1
-(integer) 96
-127.0.0.1:6379> PERSIST list1
-(integer) 1
-127.0.0.1:6379> TTL list1
-(integer) -1
+make test
+make lint
+make fmt
+```
 
+第一次运行 `make lint` 时会自动安装 `golangci-lint`。
+
+---
+
+## 常用命令支持
+
+- **String**：`GET`、`SET`、`MSET`、`MGET`、`INCR`、`DECR`、`SETEX`、`SETNX`、`APPEND` 等。
+- **Hash**：`HSET`、`HGET`、`HDEL`、`HMGET`、`HINCRBY`、`HRANDFIELD`、`HSTRLEN` 等。
+- **List**：`LPUSH`、`RPUSH`、`LPOP`、`RPOP`、`LRANGE`、`LSET`、`LTRIM` 等。
+- **Set**：`SADD`、`SREM`、`SMEMBERS`、`SINTER`、`SUNION`、`SRANDMEMBER` 等。
+- **Sorted Set**：`ZADD`、`ZREM`、`ZINCRBY`、`ZPOPMAX`、`ZCOUNT` 等。
+- **Key/Admin**：`DEL`、`EXPIRE`、`TTL`、`TYPE`、`PING`、`INFO` 等。
+
+详细命令实现位于 `pkg/memdb` 目录。
+
+---
+
+## 目录结构
 
 ```
-## 性能基准测试
-性能基准测试的结果是基于 redis-benchmark 工具进行的。[redis-benchmark](https://redis.io/topics/benchmarks)
-测试在Lenovo Legion R70002021, 
-AMD Ryzen 5 5600H with Redeon Graphics, 
-NVIDA Geforce RTX3050 laptop CPU 4GB, 
-16GB (3200MHX),
-Windows11 with Ubuntu 20.04.6 LTS(WSL2)
-`redis-benchmark -c 50-n 200000 -t get`
-
-```text
-get: 146716.22 requests per second
-set: 153433.08 requests per second
-incr: 144334.86 requests per second
-lpush: 145313.64 requests per second
-rpush: 139470.00 requests per second
-lpop: 152226.30 requests per second
-rpop: 147929.08 requests per second
-sadd: 160599.60 requests per second
-hset: 147765.06 requests per second
-spop: 144109.50 requests per second
-
-lrange_100: 83880.90 requests per second
-lrange_300: 50652.36 requests per second
-lrange_500: 37703.82 requests per second
-lrange_600: 27895.92 requests per second
-
-mset: 126196.26 requests per second
-```
-## 可用命令
-All commands used as [redis commands](https://redis.io/commands/). You can use any redis client to communicate with thinRedis.
-
-
-| key     | string      | list   | set         | hash         | ZSet  |
-| ------- | ----------- | ------ | ----------- | ------------ | ---- |
-| del     | set         | llen   | sadd        | hdel         | zadd |
-| exists  | get         | lindex | scard       | hexists      |      |
-| keys    | getrange    | lpos   | sdiff       | hget         |      |
-| expire  | setrange    | lpop   | sdirrstore  | hgetall      |      |
-| persist | mget        | rpop   | sinter      | hincrby      |      |
-| ttl     | mset        | lpush  | sinterstore | hincrbyfloat |      |
-| type    | setex       | lpushx | sismember   | hkeys        |      |
-| rename  | setnx       | rpush  | smembers    | hlen         |      |
-| ping    | strlen      | rpushx | smove       | hmget        |      |
-| info    | incr        | lset   | spop        | hset         |      |
-|         | incrby      | lrem   | srandmember | hsetnx       |      |
-|         | decr        | ltrim  | srem        | hvals        |      |
-|         | decrby      | lrange | sunion      | hstrlen      |      |
-|         | incrbyfloat | lmove  | sunionstore | hrandfield   |      |
-|         | append      |        |             |              |      |
-## 文件目录
-
-### 一级目录
-
-```go
 .
-|-- Dockerfile
-|-- LICENSE
-|-- Makefile
-|-- README.md
-|-- cmd
-|-- go.mod
-|-- go.sum
-|-- main.go
-|-- pkg
-`-- sh
-
+├── cmd/                 # CLI 入口
+├── pkg/
+│   ├── RESP/            # RESP 编码解码
+│   ├── cluster/         # Raft 节点封装
+│   ├── logger/          # slog 日志封装
+│   ├── memdb/           # 内存数据库及命令实现
+│   └── server/          # TCP 服务监听/连接处理
+├── data/                # 运行时生成的 Raft 数据目录
+├── Makefile             # 常用构建命令
+├── Justfile             # 常用脚本别名
+├── go.mod / go.sum
+└── README.md / README_CN.md
 ```
 
-### 二级目录
+---
 
-```go
-.
-|-- Dockerfile
-|-- LICENSE
-|-- Makefile
-|-- README.md
-|-- cmd
-|   `-- init.go
-|-- go.mod
-|-- go.sum
-|-- main.go
-|-- pkg
-|   |-- RESP
-|   |   |-- arraydata.go
-|   |   |-- bulkdata.go
-|   |   |-- errordata.go
-|   |   |-- intdata.go
-|   |   |-- parser_test.go
-|   |   |-- parsestream.go
-|   |   |-- plaindata.go
-|   |   |-- stringdata.go
-|   |   `-- structure.go
-|   |-- config
-|   |   `-- config.go
-|   |-- logger
-|   |   |-- level.go
-|   |   `-- logger.go
-|   |-- memdb
-|   |   |-- command.go
-|   |   |-- concurrentmap.go
-|   |   |-- concurrentmap_test.go
-|   |   |-- db.go
-|   |   |-- dblock.go
-|   |   |-- hash.go
-|   |   |-- hash_struct.go
-|   |   |-- info.go
-|   |   |-- keys.go
-|   |   |-- keys_test.go
-|   |   |-- list.go
-|   |   |-- list_struct.go
-|   |   |-- list_test.go
-|   |   |-- set.go
-|   |   |-- set_struct.go
-|   |   |-- string.go
-|   |   |-- string_test.go
-|   |   |-- zset.go
-|   |   |-- zset_struct.go
-|   |   `-- zset_test.go
-|   |-- server
-|   |   |-- aof.go
-|   |   |-- handler.go
-|   |   `-- server.go
-|   `-- util
-|       `-- util.go
-`-- sh
-    `-- testAof
+## 未来规划
 
-10 directories, 45 files
-➜  tinyredis git:(aof) ✗ >....
-|   |   |-- bulkdata.go
-|   |   |-- errordata.go
-|   |   |-- intdata.go
-|   |   |-- parser_test.go
-|   |   |-- parsestream.go
-|   |   |-- plaindata.go
-|   |   |-- stringdata.go
-|   |   `-- structure.go
-|   |-- config
-|   |   `-- config.go
-|   |-- logger
-|   |   |-- level.go
-|   |   `-- logger.go
-|   |-- memdb
-|   |   |-- command.go
-|   |   |-- concurrentmap.go
-|   |   |-- concurrentmap_test.go
-|   |   |-- db.go
-|   |   |-- dblock.go
-|   |   |-- hash.go
-|   |   |-- hash_struct.go
-|   |   |-- info.go
-|   |   |-- keys.go
-|   |   |-- keys_test.go
-|   |   |-- list.go
-|   |   |-- list_struct.go
-|   |   |-- list_test.go
-|   |   |-- set.go
-|   |   |-- set_struct.go
-|   |   |-- string.go
-|   |   |-- string_test.go
-|   |   |-- zset.go
-|   |   |-- zset_struct.go
-|   |   `-- zset_test.go
-|   |-- server
-|   |   |-- aof.go
-|   |   |-- handler.go
-|   |   `-- server.go
-|   `-- util
-|       `-- util.go
-`-- sh
-```
+- 覆盖更多 Redis 命令（事务、Pub/Sub）。
+- follower 只读请求的转发。
+- 监控指标与管理接口。
+- 支持 RDB/AOF 导出。
 
+欢迎提交 Issue 与 PR！

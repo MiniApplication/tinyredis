@@ -25,6 +25,30 @@ type listNode struct {
 	value any
 }
 
+var listNodePool = sync.Pool{
+	New: func() any {
+		return new(listNode)
+	},
+}
+
+func acquireNode(key string, value any) *listNode {
+	node := listNodePool.Get().(*listNode)
+	node.next = nil
+	node.key = key
+	node.value = value
+	return node
+}
+
+func releaseNode(node *listNode) {
+	if node == nil {
+		return
+	}
+	node.next = nil
+	node.key = ""
+	node.value = nil
+	listNodePool.Put(node)
+}
+
 type dataStructure interface {
 	Get(key string) (any, bool)
 	Put(key string, value any) bool
@@ -35,8 +59,7 @@ type dataStructure interface {
 
 type linkedList struct {
 	head  *listNode
-	tail  *listNode // 添加尾指针，优化插入操作
-	count int32
+	count int
 }
 
 func (l *linkedList) Get(key string) (any, bool) {
@@ -56,15 +79,6 @@ func (l *linkedList) Get(key string) (any, bool) {
 }
 
 func (l *linkedList) Put(key string, value any) bool {
-	// 快速路径：空链表直接插入
-	if l.head == nil {
-		newNode := &listNode{key: key, value: value}
-		l.head = newNode
-		l.tail = newNode
-		atomic.AddInt32(&l.count, 1)
-		return true
-	}
-
 	// 检查是否已存在
 	node := l.head
 	for node != nil {
@@ -75,10 +89,10 @@ func (l *linkedList) Put(key string, value any) bool {
 		node = node.next
 	}
 
-	// 头部插入新节点（缓存友好）
-	newNode := &listNode{next: l.head, key: key, value: value}
+	newNode := acquireNode(key, value)
+	newNode.next = l.head
 	l.head = newNode
-	atomic.AddInt32(&l.count, 1)
+	l.count++
 	return true
 }
 
@@ -90,23 +104,20 @@ func (l *linkedList) Remove(key string) bool {
 
 	// 特殊处理头节点
 	if l.head.key == key {
-		l.head = l.head.next
-		if l.head == nil {
-			l.tail = nil
-		}
-		atomic.AddInt32(&l.count, -1)
+		removed := l.head
+		l.head = removed.next
+		releaseNode(removed)
+		l.count--
 		return true
 	}
 
-	var prev *listNode
-	node := l.head
+	prev := l.head
+	node := l.head.next
 	for node != nil {
 		if node.key == key {
 			prev.next = node.next
-			if node == l.tail {
-				l.tail = prev
-			}
-			atomic.AddInt32(&l.count, -1)
+			releaseNode(node)
+			l.count--
 			return true
 		}
 		prev = node
@@ -116,7 +127,7 @@ func (l *linkedList) Remove(key string) bool {
 }
 
 func (l *linkedList) Size() int {
-	return int(atomic.LoadInt32(&l.count))
+	return l.count
 }
 
 func (l *linkedList) Keys() []string {
@@ -127,6 +138,18 @@ func (l *linkedList) Keys() []string {
 		node = node.next
 	}
 	return keys
+}
+
+func (l *linkedList) drainIntoTree(tree *treeWrapper) {
+	node := l.head
+	for node != nil {
+		tree.Put(node.key, node.value)
+		next := node.next
+		releaseNode(node)
+		node = next
+	}
+	l.head = nil
+	l.count = 0
 }
 
 // treeWrapper 包装 redblacktree.Tree 以实现 dataStructure 接口
@@ -230,13 +253,8 @@ func (m *ConcurrentMap) Set(key string, value any) int {
 		atomic.AddInt32(&m.count, 1)
 		// 检查是否需要转换为红黑树
 		if ll, ok := shard.data.(*linkedList); ok && ll.Size() >= TreeifyThreshold {
-			// 优化：直接遍历链表节点，避免Keys()分配
 			tree := newTreeWrapper()
-			node := ll.head
-			for node != nil {
-				tree.Put(node.key, node.value)
-				node = node.next
-			}
+			ll.drainIntoTree(tree)
 			shard.data = tree
 		}
 	}
@@ -318,11 +336,7 @@ func (m *ConcurrentMap) SetIfNotExist(key string, value any) int {
 			// 检查是否需要转换为红黑树
 			if ll, ok := shard.data.(*linkedList); ok && ll.Size() >= TreeifyThreshold {
 				tree := newTreeWrapper()
-				node := ll.head
-				for node != nil {
-					tree.Put(node.key, node.value)
-					node = node.next
-				}
+				ll.drainIntoTree(tree)
 				shard.data = tree
 			}
 		}
@@ -340,6 +354,18 @@ func (m *ConcurrentMap) Len() int {
 
 // Clear 清空 ConcurrentMap 中的所有键值对
 func (m *ConcurrentMap) Clear() {
+	for _, shard := range m.shards {
+		shard.rwMu.Lock()
+		if ll, ok := shard.data.(*linkedList); ok {
+			node := ll.head
+			for node != nil {
+				next := node.next
+				releaseNode(node)
+				node = next
+			}
+		}
+		shard.rwMu.Unlock()
+	}
 	*m = *NewConcurrentMap(len(m.shards))
 }
 
@@ -355,10 +381,11 @@ func (m *ConcurrentMap) Keys() []string {
 
 	// 批量收集keys，减少锁的获取次数
 	for _, shard := range m.shards {
-		if shard.data.Size() == 0 {
-			continue // 跳过空分片
-		}
 		shard.rwMu.RLock()
+		if shard.data.Size() == 0 {
+			shard.rwMu.RUnlock()
+			continue
+		}
 		keys = append(keys, shard.data.Keys()...)
 		shard.rwMu.RUnlock()
 	}

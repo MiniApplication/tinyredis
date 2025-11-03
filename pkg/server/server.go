@@ -5,12 +5,24 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/hsn0918/tinyredis/pkg/cluster"
 	"github.com/hsn0918/tinyredis/pkg/config"
 	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 // Start starts a simple redis server
 func Start(cfg *config.Config) error {
+	raftNode, err := cluster.NewNode(cfg)
+	if err != nil {
+		logger.Panic("failed to create raft node: ", err)
+		return err
+	}
+	defer func() {
+		if stopErr := raftNode.Stop(); stopErr != nil {
+			logger.Error("failed to stop raft node: ", stopErr)
+		}
+	}()
+
 	listener, err := net.Listen("tcp", cfg.Host+":"+strconv.Itoa(cfg.Port))
 	if err != nil {
 		logger.Panic(err)
@@ -25,7 +37,7 @@ func Start(cfg *config.Config) error {
 	logger.Info("Server Listen at", cfg.Host+":"+strconv.Itoa(cfg.Port))
 
 	var sg sync.WaitGroup
-	handler := NewHandler()
+	handler := NewHandler(raftNode)
 	for {
 		conn, err := listener.Accept()
 		if err != nil {

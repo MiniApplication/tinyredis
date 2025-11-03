@@ -1,203 +1,209 @@
 # tiny-redis
-[中文](./README_CN.md)
-[EN](./README.md)
-## Introduction
 
-`tiny-redis` is a high-performance, standalone cache server written in Go that supports persistence. It fully implements the RESP (Redis Serialization Protocol), making it compatible with any Redis client.
+[中文](./README_CN.md)
+
+`tiny-redis` is a Redis-compatible cache server written in Go. It implements the RESP protocol, stores data in memory, persists Raft state with BoltDB, and supports log-based replication between multiple nodes.
+
+---
 
 ## Features
 
-- Supports all clients that use the RESP protocol.
-- Provides support for data types such as strings, lists, sets, and hashes.
-- Implements TTL (keys will expire after a specified time).
-- Fully in-memory storage.
-- Supports various atomic commands like `INCR`, `DECR`, `INCRBY`, `MSET`, `SMOVE`, etc.
+- RESP protocol compatibility – works with `redis-cli`, Medis, AnotherRedisDesktopManager, etc.
+- In-memory data structures covering strings, hashes, lists, sets, sorted sets, TTL, and more.
+- Raft-based clustering with automatic leader election and log replication.
+- Durable metadata: Raft log, stable store, and snapshots persisted to disk.
+- Pluggable logging using Go 1.21+ `log/slog` with optional sampling and JSON file output.
+- CLI configuration via flags or config file.
 
-## Quick Start with Docker
+---
 
-### Building the Docker Image
+## Requirements
+
+- Go 1.23+
+- macOS/Linux (tested) – Windows via WSL2
+- Docker 24+ (optional)
+
+---
+
+## Build & Run (single node)
 
 ```bash
-$ git clone https://github.com/HSn0918/tinyredis
-$ cd tinyredis
-$ docker build -t tiny-redis:0.1 .
+git clone https://github.com/HSn0918/tinyredis
+cd tinyredis
+go build ./cmd/tinyredis
+
+# start a standalone node on 127.0.0.1:6379
+./tinyredis \
+  --host 127.0.0.1 \
+  --port 6379 \
+  --node-id node-1 \
+  --raft-dir ./data/node1 \
+  --raft-bind 127.0.0.1:7000 \
+  --raft-http 127.0.0.1:17000 \
+  --raft-bootstrap
 ```
 
-### Running the Server
-
-We have included the `redis-cli` command-line tool in the `/data` directory for easy debugging and usage.
-
-Note: Although the project currently does not support data persistence, mounting the `/data` directory will still provide access to logs and `tiny-redis` and `redis-cli` binaries.
+Then connect with `redis-cli`:
 
 ```bash
-$ docker run -d \
-  --name tiny-redis \
+redis-cli -p 6379 ping
+```
+
+Data lives in memory, while Raft metadata is written to `./data/node1/`.
+
+---
+
+## Multi-node cluster
+
+1. **Bootstrap the first node**
+   ```bash
+   ./tinyredis --node-id node-1 \
+     --host 127.0.0.1 --port 6379 \
+     --raft-dir ./data/node1 \
+     --raft-bind 127.0.0.1:7000 \
+     --raft-http 127.0.0.1:17000 \
+     --raft-bootstrap
+   ```
+   Wait until logs show it as leader.
+
+2. **Join additional nodes**
+   Each new node needs an empty raft directory and `--raft-join` pointing to the leader’s HTTP address:
+   ```bash
+   ./tinyredis --node-id node-2 \
+     --host 127.0.0.1 --port 6380 \
+     --raft-dir ./data/node2 \
+     --raft-bind 127.0.0.1:7001 \
+     --raft-http 127.0.0.1:17001 \
+     --raft-join 127.0.0.1:17000
+   ```
+   Repeat for node-3, etc.
+
+3. **Restarting existing nodes**
+   - Keep their `--node-id`, `--raft-dir`, `--raft-bind`, `--raft-http`.
+   - Do **not** pass `--raft-join` or `--raft-bootstrap` again.
+   - Start the former leader first, then the followers.
+
+4. **Adding a brand new node**
+   - Create a fresh directory for its raft state.
+   - Start with `--raft-join` pointed at the current leader.
+
+---
+
+## Command-line flags (common)
+
+| Flag | Description |
+|------|-------------|
+| `--host`, `--port` | RESP listening address. |
+| `--node-id` | Unique Raft server ID (string). |
+| `--raft-dir` | Directory for Raft log/stable/snapshots. |
+| `--raft-bind` | TCP address for Raft transport (peer replication). |
+| `--raft-http` | HTTP address for join requests. |
+| `--raft-join` | `leader-host:leader-http-port` to join an existing cluster. |
+| `--raft-bootstrap` | Bootstrap a new cluster when no state exists. |
+| `--logdir` | Directory for `redis.log` (JSON). |
+| `--loglevel` | `debug`, `info`, `warn`, `error`. |
+| `--log-sampling` | Enable log sampling (default true). |
+| `--log-sampling-interval` | Sampling window (default 1s). |
+
+Run `./tinyredis --help` for the full list.
+
+---
+
+## Docker quick start
+
+Build locally:
+```bash
+docker build -t tinyredis:latest .
+```
+
+Run single node:
+```bash
+docker run -d --name tinyredis \
   -p 6379:6379 \
-  -v tinyredis-data:/data \
-  tiny-redis:0.1
+  -v $PWD/data/node1:/data \
+  tinyredis:latest \
+  ./tinyredis --host 0.0.0.0 --node-id node-1 \
+  --raft-dir /data --raft-bind 0.0.0.0:7000 \
+  --raft-http 0.0.0.0:17000 --raft-bootstrap
 ```
 
-## Building from Source
+For multi-node clusters you need multiple containers (or compose) with different node IDs, ports, and persistent volumes.
 
-Requires Go 1.20+
+### Automated Failover Proxy (Experimental)
+
+Need a stable endpoint regardless of who the Raft leader is? Start the built-in proxy:
 
 ```bash
-$ go build -o tiny-redis
+./bin/tinyredis failover-proxy \
+  --listen 127.0.0.1:7390 \
+  --nodes 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
 ```
 
-Start the `tiny-redis` server:
+The proxy probes each RESP address with `INFO replication`, forwards connections to whoever is currently `role:master`, and refreshes the target whenever leadership changes. Clients such as `redis-cli` that reconnect on disconnect will automatically land on the new leader via the proxy.
+
+> `INFO replication` now surfaces details like `role`, `leader_id`, `leader_raft_addr`, and enumerates `known_peers`, which makes it easy to script discovery logic.
+
+---
+
+## Logging
+
+By default logs go to stdout in text format. When `--logdir` is set, a JSON `redis.log` is also created. Sampling (enabled by default) throttles repeated messages; adjust via `--log-sampling-*` flags or disable entirely with `--log-sampling=false`.
+
+---
+
+## Testing
 
 ```bash
-$ ./tiny-redis
+go test ./...
+golangci-lint run
 ```
 
-Use command-line options or configuration files to change the default settings:
+Some packages require write access to `$GOCACHE`; set `GOCACHE` if your environment is read-only.
 
-```bash
-$ ./tiny-redis -h
-A tiny Redis server
+---
 
-Usage:
-  tiny-redis [flags]
-  tiny-redis [command]
+## Commands overview
 
-Available Commands:
-  completion  Generate completion script
-  help        Help about any command
+`tiny-redis` implements a large subset of Redis commands. Highlights per data type:
 
-Flags:
-  -c, --config string     Specify a config file: such as /etc/redis.conf
-  -h, --help              Help for tiny-redis
-  -H, --host string       Bind host IP: default is 127.0.0.1 (default "0.0.0.0")
-  -d, --logdir string     Set log directory: default is /tmp (default "./")
-  -l, --loglevel string   Set log level: default is info (default "info")
-  -p, --port int          Bind a listening port: default is 6379 (default 6379)
+- **String:** `GET`, `SET`, `MSET`, `MGET`, `INCR`, `DECR`, `SETEX`, `SETNX`, `APPEND`, etc.
+- **Hash:** `HSET`, `HGET`, `HDEL`, `HMGET`, `HINCRBY`, `HRANDFIELD`, `HSTRLEN`.
+- **List:** `LPUSH`, `RPUSH`, `LPOP`, `RPOP`, `LRANGE`, `LSET`, `LTRIM`.
+- **Set:** `SADD`, `SREM`, `SMEMBERS`, `SINTER`, `SUNION`, `SDIFF`, `SRANDMEMBER`.
+- **Sorted Set:** `ZADD`, `ZREM`, `ZINCRBY`, `ZPOPMAX`, `ZCOUNT`.
+- **Key / Admin:** `DEL`, `EXPIRE`, `TTL`, `TYPE`, `PING`, `INFO`.
 
-Use "tiny-redis [command] --help" for more information about a command.
+See the actual command registration under `pkg/memdb` for the authoritative list.
+
+---
+
+## Project structure
+
 ```
-
-You can also enable auto-completion using Cobra for the current session:
-
-```bash
-$ ./tiny-redis completion zsh > _tiny-redis_completion
-$ source _tiny-redis_completion
-```
-
-## Redis Client Compatibility
-
-Any Redis client can communicate with the `tiny-redis` server.
-
-> Currently, graphical clients like Medis and AnotherRedisDesktopManager are supported. However, note that some server-related information displayed by these clients may not be accurate.
-
-For example, you can use the `redis-cli` to communicate with the `tiny-redis` server:
-
-```bash
-# Start a tiny-redis server listening on port 6379
-$ ./tiny-redis
-[info][server.go:25] 2023/09/17 00:55:35 [Server Listen at 127.0.0.1:6379]
-[info][server.go:35] 2023/09/17 00:55:40 [127.0.0.1:7810 connected]
-```
-
-Using `redis-cli`:
-
-```bash
-$ redis-cli
-127.0.0.1:6379> PING
-PONG
-127.0.0.1:6379> MSET key1 a key2 b
-OK
-127.0.0.1:6379> MGET key1 key2 nonekey
-1) "a"
-2) "b"
-3) ""
-127.0.0.1:6379> RPUSH list1 1 2 3 4 5
-(integer) 5
-127.0.0.1:6379> LRANGE list1 0 -1
-1) "1"
-2) "2"
-3) "3"
-4) "4"
-5) "5"
-127.0.0.1:6379> TYPE list1
-list
-127.0.0.1:6379> EXPIRE list1 100
-(integer) 1
-127.0.0.1:6379> TTL list1
-(integer) 96
-127.0.0.1:6379> PERSIST list1
-(integer) 1
-127.0.0.1:6379> TTL list1
-(integer) -1
-```
-
-## Performance Benchmark
-
-Performance benchmarks are based on the `redis-benchmark` tool. You can find more information about `redis-benchmark` [here](https://redis.io/topics/benchmarks).
-
-Test machine:  
-
-- **Model**: Lenovo Legion R70002021  
-- **CPU**: AMD Ryzen 5 5600H with Radeon Graphics, NVIDIA GeForce RTX3050  
-- **Memory**: 16GB (3200MHZ)  
-- **Environment**: Windows 11 with Ubuntu 20.04.6 LTS (WSL2)  
-
-Command: `redis-benchmark -c 50 -n 200000 -t get`
-
-```text
-get: 146716.22 requests per second
-set: 153433.08 requests per second
-incr: 144334.86 requests per second
-lpush: 145313.64 requests per second
-rpush: 139470.00 requests per second
-lpop: 152226.30 requests per second
-rpop: 147929.08 requests per second
-sadd: 160599.60 requests per second
-hset: 147765.06 requests per second
-spop: 144109.50 requests per second
-
-lrange_100: 83880.90 requests per second
-lrange_300: 50652.36 requests per second
-lrange_500: 37703.82 requests per second
-lrange_600: 27895.92 requests per second
-
-mset: 126196.26 requests per second
-```
-
-## Available Commands
-
-`tiny-redis` supports several Redis-like commands. You can view the complete list of Redis commands [here](https://redis.io/commands/).
-
-| key     | string      | list   | set         | hash         | ZSet  |
-| ------- | ----------- | ------ | ----------- | ------------ | ---- |
-| del     | set         | llen   | sadd        | hdel         | zadd |
-| exists  | get         | lindex | scard       | hexists      |      |
-| keys    | getrange    | lpos   | sdiff       | hget         |      |
-| expire  | setrange    | lpop   | sdirrstore  | hgetall      |      |
-| persist | mget        | rpop   | sinter      | hincrby      |      |
-| ttl     | mset        | lpush  | sinterstore | hincrbyfloat |      |
-| type    | setex       | lpushx | sismember   | hkeys        |      |
-| rename  | setnx       | rpush  | smembers    | hlen         |      |
-| ping    | strlen      | rpushx | smove       | hmget        |      |
-| info    | incr        | lset   | spop        | hset         |      |
-|         | incrby      | lrem   | srandmember | hsetnx       |      |
-|         | decr        | ltrim  | srem        | hvals        |      |
-|         | decrby      | lrange | sunion      | hstrlen      |      |
-|         | incrbyfloat | lmove  | sunionstore | hrandfield   |      |
-|         | append      |        |             |              |      |
-
-## Directory Structure
-
-### First-level directories
-
-```bash
 .
-|-- Dockerfile
-|-- LICENSE
-|-- Makefile
-|-- README.md
-|-- cmd
-|-- go.mod
-|-- go.sum
+├── cmd/               # CLI entrypoint
+├── pkg/
+│   ├── RESP/          # RESP parser/encoder
+│   ├── cluster/       # Raft node orchestration
+│   ├── logger/        # slog-based logging helpers
+│   ├── memdb/         # in-memory database & commands
+│   └── server/        # TCP server & connection handler
+├── data/              # default Raft data directory (created at runtime)
+├── Dockerfile
+├── go.mod / go.sum
+└── README.md
+```
+
+---
+
+## Roadmap ideas
+
+- More complete Redis command coverage (transactions, pub/sub).
+- Replication read forwarding for followers.
+- Metrics endpoints and admin tools.
+- Optional RDB/AOF export.
+
+Contributions & issues are welcome!
 |-- main.go
 |-- pkg
 `-- sh
@@ -264,4 +270,3 @@ mset: 126196.26 requests per second
 ```
 
 ---
-

@@ -7,12 +7,7 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
 
 // BenchmarkConcurrentMapSet 测试并发写入性能
 func BenchmarkConcurrentMapSet(b *testing.B) {

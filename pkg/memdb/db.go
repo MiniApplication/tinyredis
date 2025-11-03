@@ -2,6 +2,7 @@ package memdb
 
 import (
 	"container/heap"
+	"math/bits"
 	"strings"
 	"sync"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/hsn0918/tinyredis/pkg/RESP"
 	"github.com/hsn0918/tinyredis/pkg/config"
 	"github.com/hsn0918/tinyredis/pkg/logger"
+	"github.com/hsn0918/tinyredis/pkg/util"
 )
 
 // TTLItem represents a key with its expiration time
@@ -16,6 +18,10 @@ type TTLItem struct {
 	key      string
 	expireAt int64
 	index    int
+}
+
+var ttlItemPool = sync.Pool{
+	New: func() any { return &TTLItem{} },
 }
 
 // TTLHeap 是一个最小堆，用于高效管理过期键
@@ -48,23 +54,74 @@ func (h *TTLHeap) Pop() interface{} {
 
 // TTLManager 管理键的过期时间
 type TTLManager struct {
-	heap     TTLHeap
-	keyMap   map[string]*TTLItem
-	lock     sync.RWMutex
-	stopChan chan struct{}
-	db       *ConcurrentMap
+	shards    []*ttlShard
+	shardMask int
+	stopChan  chan struct{}
+	db        *ConcurrentMap
+}
+
+type ttlShard struct {
+	lock sync.Mutex
+	heap TTLHeap
+	keys map[string]*TTLItem
 }
 
 func NewTTLManager(db *ConcurrentMap) *TTLManager {
-	tm := &TTLManager{
-		heap:     make(TTLHeap, 0),
-		keyMap:   make(map[string]*TTLItem),
-		stopChan: make(chan struct{}),
-		db:       db,
+	shardCount := ttlShardCount(config.Configures.ShardNum)
+	shards := make([]*ttlShard, shardCount)
+	for i := range shards {
+		sh := &ttlShard{
+			heap: make(TTLHeap, 0),
+			keys: make(map[string]*TTLItem),
+		}
+		heap.Init(&sh.heap)
+		shards[i] = sh
 	}
-	heap.Init(&tm.heap)
+
+	tm := &TTLManager{
+		shards:    shards,
+		shardMask: shardCount - 1,
+		stopChan:  make(chan struct{}),
+		db:        db,
+	}
 	go tm.cleanupLoop()
 	return tm
+}
+
+func ttlShardCount(shardHint int) int {
+	if shardHint <= 0 {
+		shardHint = 1
+	}
+	if shardHint > 256 {
+		shardHint = 256
+	}
+	if shardHint < 16 {
+		shardHint = 16
+	}
+	return 1 << uint(bits.Len(uint(shardHint-1)))
+}
+
+func acquireTTLItem(key string, expire int64) *TTLItem {
+	item := ttlItemPool.Get().(*TTLItem)
+	item.key = key
+	item.expireAt = expire
+	item.index = -1
+	return item
+}
+
+func releaseTTLItem(item *TTLItem) {
+	if item == nil {
+		return
+	}
+	item.key = ""
+	item.expireAt = 0
+	item.index = -1
+	ttlItemPool.Put(item)
+}
+
+func (tm *TTLManager) shardFor(key string) *ttlShard {
+	hash := util.HashKey(key)
+	return tm.shards[hash&tm.shardMask]
 }
 
 func (tm *TTLManager) cleanupLoop() {
@@ -83,71 +140,94 @@ func (tm *TTLManager) cleanupLoop() {
 
 func (tm *TTLManager) cleanup() {
 	now := time.Now().Unix()
-	tm.lock.Lock()
-	defer tm.lock.Unlock()
+	for _, shard := range tm.shards {
+		expired := shard.collectExpired(now)
+		for _, key := range expired {
+			tm.db.Delete(key)
+		}
+	}
+}
 
-	for tm.heap.Len() > 0 {
-		item := tm.heap[0]
+func (s *ttlShard) collectExpired(now int64) []string {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	var expired []string
+	for s.heap.Len() > 0 {
+		item := s.heap[0]
 		if item.expireAt > now {
 			break
 		}
-		heap.Pop(&tm.heap)
-		delete(tm.keyMap, item.key)
-		tm.db.Delete(item.key)
+		popped := heap.Pop(&s.heap).(*TTLItem)
+		delete(s.keys, popped.key)
+		expired = append(expired, popped.key)
+		releaseTTLItem(popped)
 	}
+	return expired
 }
 
 func (tm *TTLManager) SetTTL(key string, expireAt int64) {
-	tm.lock.Lock()
-	defer tm.lock.Unlock()
+	shard := tm.shardFor(key)
+	shard.lock.Lock()
+	defer shard.lock.Unlock()
 
-	if item, exists := tm.keyMap[key]; exists {
+	if item, exists := shard.keys[key]; exists {
 		item.expireAt = expireAt
-		heap.Fix(&tm.heap, item.index)
-	} else {
-		item := &TTLItem{
-			key:      key,
-			expireAt: expireAt,
-		}
-		heap.Push(&tm.heap, item)
-		tm.keyMap[key] = item
-	}
-}
-
-func (tm *TTLManager) CheckTTL(key string) bool {
-	tm.lock.RLock()
-	item, exists := tm.keyMap[key]
-	tm.lock.RUnlock()
-
-	if !exists {
-		return true
+		heap.Fix(&shard.heap, item.index)
+		return
 	}
 
-	now := time.Now().Unix()
-	if item.expireAt > now {
-		return true
-	}
-
-	tm.lock.Lock()
-	defer tm.lock.Unlock()
-
-	// 双重检查，避免并发问题
-	if item, exists = tm.keyMap[key]; exists && item.expireAt <= now {
-		heap.Remove(&tm.heap, item.index)
-		delete(tm.keyMap, key)
-		return false
-	}
-	return true
+	item := acquireTTLItem(key, expireAt)
+	heap.Push(&shard.heap, item)
+	shard.keys[key] = item
 }
 
 func (tm *TTLManager) RemoveTTL(key string) {
-	tm.lock.Lock()
-	defer tm.lock.Unlock()
-
-	if item, exists := tm.keyMap[key]; exists {
-		heap.Remove(&tm.heap, item.index)
-		delete(tm.keyMap, key)
+	shard := tm.shardFor(key)
+	shard.lock.Lock()
+	if item, exists := shard.keys[key]; exists {
+		removed := heap.Remove(&shard.heap, item.index).(*TTLItem)
+		delete(shard.keys, key)
+		releaseTTLItem(removed)
 	}
+	shard.lock.Unlock()
+}
+
+func (tm *TTLManager) ExpireAt(key string) (int64, bool) {
+	shard := tm.shardFor(key)
+	shard.lock.Lock()
+	item, exists := shard.keys[key]
+	if !exists {
+		shard.lock.Unlock()
+		return 0, false
+	}
+	expire := item.expireAt
+	shard.lock.Unlock()
+	return expire, true
+}
+
+func (tm *TTLManager) CheckTTL(key string) bool {
+	now := time.Now().Unix()
+	shard := tm.shardFor(key)
+
+	shard.lock.Lock()
+	item, exists := shard.keys[key]
+	if !exists {
+		shard.lock.Unlock()
+		return true
+	}
+	if item.expireAt > now {
+		shard.lock.Unlock()
+		return true
+	}
+
+	removed := heap.Remove(&shard.heap, item.index).(*TTLItem)
+	delete(shard.keys, key)
+	shard.lock.Unlock()
+
+	releaseTTLItem(removed)
+	tm.db.Delete(key)
+	return false
 }
 
 // MemDb is the memory cache database
@@ -158,6 +238,8 @@ type MemDb struct {
 	db    *ConcurrentMap
 	ttl   *TTLManager
 	locks *Locks
+	// replicationFetcher returns runtime replication metadata using RESP types.
+	replicationFetcher func() RESP.RedisData
 }
 
 func NewMemDb() *MemDb {
@@ -216,6 +298,13 @@ func (m *MemDb) DelTTL(key string) int {
 	return 1
 }
 
+// SetReplicationInfoFetcher registers a callback used by administrative commands
+// (e.g. INFO replication) to obtain cluster metadata. The callback must return
+// RESP-encoded data (typically BulkData) and may be nil to disable reporting.
+func (m *MemDb) SetReplicationInfoFetcher(fetcher func() RESP.RedisData) {
+	m.replicationFetcher = fetcher
+}
+
 // Get 获取键的值
 func (m *MemDb) Get(key string) (interface{}, bool) {
 	return m.db.Get(key)
@@ -238,15 +327,11 @@ func (m *MemDb) Size() int {
 
 // GetTTL 获取键的 TTL（秒）
 func (m *MemDb) GetTTL(key string) int64 {
-	m.ttl.lock.RLock()
-	item, exists := m.ttl.keyMap[key]
-	m.ttl.lock.RUnlock()
-
+	expireAt, exists := m.ttl.ExpireAt(key)
 	if !exists {
 		return -1
 	}
-
-	ttl := item.expireAt - time.Now().Unix()
+	ttl := expireAt - time.Now().Unix()
 	if ttl <= 0 {
 		return -1
 	}

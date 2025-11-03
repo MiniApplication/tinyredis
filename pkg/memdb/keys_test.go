@@ -25,8 +25,10 @@ func TestDelkey(t *testing.T) {
 
 	_, ok1 := memdb.db.Get("a")
 	_, ok2 := memdb.db.Get("b")
-	_, ok3 := memdb.ttl.keyMap["b"]
-	if ok1 || ok2 || ok3 {
+	if _, exists := memdb.ttl.ExpireAt("b"); exists {
+		t.Error("ttl entry still exists for key b")
+	}
+	if ok1 || ok2 {
 		t.Error("del failed")
 	}
 }
@@ -40,9 +42,9 @@ func TestExpireKey(t *testing.T) {
 		t.Error("expire reply is not correct")
 	}
 
-	if ttlItem, exists := memdb.ttl.keyMap["a"]; !exists ||
-		ttlItem.expireAt-time.Now().Unix() > 100 ||
-		ttlItem.expireAt-time.Now().Unix() < 99 {
+	if expireAt, exists := memdb.ttl.ExpireAt("a"); !exists ||
+		expireAt-time.Now().Unix() > 100 ||
+		expireAt-time.Now().Unix() < 99 {
 		t.Error("ttl set incorrect")
 	}
 
@@ -51,9 +53,9 @@ func TestExpireKey(t *testing.T) {
 		t.Error("expire reply is not correct")
 	}
 
-	if ttlItem, exists := memdb.ttl.keyMap["a"]; !exists ||
-		ttlItem.expireAt-time.Now().Unix() > 1000 ||
-		ttlItem.expireAt-time.Now().Unix() < 999 {
+	if expireAt, exists := memdb.ttl.ExpireAt("a"); !exists ||
+		expireAt-time.Now().Unix() > 1000 ||
+		expireAt-time.Now().Unix() < 999 {
 		t.Error("ttl set incorrect")
 	}
 
@@ -62,9 +64,9 @@ func TestExpireKey(t *testing.T) {
 		t.Error("expire reply is not correct")
 	}
 
-	if ttlItem, exists := memdb.ttl.keyMap["b"]; !exists ||
-		ttlItem.expireAt-time.Now().Unix() > 100 ||
-		ttlItem.expireAt-time.Now().Unix() < 99 {
+	if expireAt, exists := memdb.ttl.ExpireAt("b"); !exists ||
+		expireAt-time.Now().Unix() > 100 ||
+		expireAt-time.Now().Unix() < 99 {
 		t.Error("ttl set incorrect")
 	}
 
@@ -73,9 +75,9 @@ func TestExpireKey(t *testing.T) {
 		t.Error("expire reply is not correct")
 	}
 
-	if ttlItem, exists := memdb.ttl.keyMap["b"]; !exists ||
-		ttlItem.expireAt-time.Now().Unix() > 1000 ||
-		ttlItem.expireAt-time.Now().Unix() < 999 {
+	if expireAt, exists := memdb.ttl.ExpireAt("b"); !exists ||
+		expireAt-time.Now().Unix() > 1000 ||
+		expireAt-time.Now().Unix() < 999 {
 		t.Error("ttl set incorrect")
 	}
 }

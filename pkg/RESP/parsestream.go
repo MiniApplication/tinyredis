@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/hsn0918/tinyredis/pkg/logger"
 	"io"
 	"strconv"
+
+	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 type ParsedRes struct {
@@ -167,7 +168,7 @@ func readLine(bufReader *bufio.Reader, state *readState) ([]byte, error) {
 		}
 		state.bulkLen = 0
 		if msg[len(msg)-1] != '\n' || msg[len(msg)-2] != '\r' {
-			return nil, errors.New(fmt.Sprintf("Protocol error. Stream message %s is invalid.", string(msg)))
+			return nil, fmt.Errorf("Protocol error. Stream message %s is invalid.", string(msg))
 		}
 	} else {
 		// read normal line
@@ -176,7 +177,7 @@ func readLine(bufReader *bufio.Reader, state *readState) ([]byte, error) {
 			return msg, err
 		}
 		if len(msg) == 0 || msg[len(msg)-2] != '\r' {
-			return nil, errors.New(fmt.Sprintf("Protocol error. Stream message %s is invalid.", string(msg)))
+			return nil, fmt.Errorf("Protocol error. Stream message %s is invalid.", string(msg))
 		}
 	}
 	return msg, err
@@ -219,7 +220,12 @@ func parseArrayHeader(msg []byte, state *readState) error {
 	}
 	state.arrayLen = arrayLen
 	state.inArray = true
-	state.arrayData = MakeArrayData([]RedisData{})
+	if arrayLen > 0 {
+		state.arrayData = MakeArrayData(make([]RedisData, 0, arrayLen))
+	} else {
+		// defer allocation until needed for null/empty arrays
+		state.arrayData = MakeArrayData([]RedisData{})
+	}
 	return nil
 }
 func parseBulkHeader(msg []byte, state *readState) error {

@@ -1,14 +1,11 @@
 package memdb
 
-import (
-	"strconv"
-	"sync/atomic"
-)
+import "strconv"
 
 // Hash 优化的哈希表结构
 type Hash struct {
 	table map[string][]byte
-	size  int32
+	size  int
 }
 
 func NewHash() *Hash {
@@ -20,7 +17,7 @@ func NewHash() *Hash {
 
 func (h *Hash) Set(key string, value []byte) {
 	if _, exists := h.table[key]; !exists {
-		atomic.AddInt32(&h.size, 1)
+		h.size++
 	}
 	h.table[key] = value
 }
@@ -32,14 +29,14 @@ func (h *Hash) Get(key string) []byte {
 func (h *Hash) Del(key string) int {
 	if _, ok := h.table[key]; ok {
 		delete(h.table, key)
-		atomic.AddInt32(&h.size, -1)
+		h.size--
 		return 1
 	}
 	return 0
 }
 
 func (h *Hash) Len() int {
-	return int(atomic.LoadInt32(&h.size))
+	return h.size
 }
 
 func (h *Hash) Keys() []string {
@@ -66,11 +63,11 @@ func (h *Hash) Clear() {
 			delete(h.table, k)
 		}
 	}
-	atomic.StoreInt32(&h.size, 0)
+	h.size = 0
 }
 
 func (h *Hash) IsEmpty() bool {
-	return atomic.LoadInt32(&h.size) == 0
+	return h.size == 0
 }
 
 func (h *Hash) Exist(key string) bool {
@@ -156,7 +153,7 @@ func (h *Hash) IncrBy(key string, incr int) (int, bool) {
 	if len(currentVal) == 0 {
 		newVal := strconv.Itoa(incr)
 		h.table[key] = []byte(newVal)
-		atomic.AddInt32(&h.size, 1)
+		h.size++
 		return incr, true
 	}
 
@@ -174,7 +171,7 @@ func (h *Hash) IncrByFloat(key string, incr float64) (float64, bool) {
 	if len(currentVal) == 0 {
 		newVal := strconv.FormatFloat(incr, 'f', -1, 64)
 		h.table[key] = []byte(newVal)
-		atomic.AddInt32(&h.size, 1)
+		h.size++
 		return incr, true
 	}
 

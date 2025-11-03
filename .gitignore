@@ -2,4 +2,6 @@
 .gitignore
 .idea
 .vscode
-*_test.go
+.cache
+data
+bin
