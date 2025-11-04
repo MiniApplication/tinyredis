@@ -19,7 +19,7 @@
 
 ## Requirements
 
-- Go 1.23+
+- Go 1.25+
 - macOS/Linux (tested) – Windows via WSL2
 - Docker 24+ (optional)
 
@@ -30,9 +30,9 @@
 ```bash
 git clone https://github.com/HSn0918/tinyredis
 cd tinyredis
-go build ./cmd/tinyredis
+GOEXPERIMENT=greenteagc go build ./cmd/tinyredis
 
-# start a standalone node on 127.0.0.1:6379
+# start a single Raft node on 127.0.0.1:6379
 ./tinyredis node \
   --host 127.0.0.1 \
   --port 6379 \
@@ -50,6 +50,21 @@ redis-cli -p 6379 ping
 ```
 
 Data lives in memory, while Raft metadata is written to `./data/node1/`.
+
+---
+
+## Standalone mode (no Raft)
+
+If you don’t need clustering or replication, you can run in standalone mode:
+
+```bash
+./tinyredis node \
+  --host 127.0.0.1 \
+  --port 6379 \
+  --standalone
+```
+
+In standalone mode, all writes apply directly to the in-memory database and there is no leader election or log replication.
 
 ---
 
@@ -239,3 +254,10 @@ See the actual command registration under `pkg/memdb` for the authoritative list
 - Optional RDB/AOF export.
 
 Contributions & issues are welcome!
+Docker build with greentea GC (default in Dockerfile):
+
+```bash
+docker build -t tinyredis:latest .
+# or override at build time
+docker build --build-arg GOEXPERIMENT=greenteagc -t tinyredis:latest .
+```

@@ -52,6 +52,8 @@ type Config struct {
 	LogSamplingThereafter int
 	ShardNum              int
 	NodeID                string
+	// Standalone indicates running without Raft clustering.
+	Standalone bool
 
 	RaftDir               string
 	RaftBind              string
@@ -84,6 +86,7 @@ func Setup(cmd *cobra.Command) (*Config, error) {
 		LogSamplingThereafter: DefaultLogSamplingThereafter,
 		ShardNum:              DefaultShardNum,
 		NodeID:                DefaultNodeID,
+		Standalone:            false,
 		RaftDir:               DefaultRaftDir,
 		RaftBind:              DefaultRaftBind,
 		RaftHTTPAddr:          DefaultRaftHTTPAddr,
@@ -95,6 +98,9 @@ func Setup(cmd *cobra.Command) (*Config, error) {
 		RaftSnapshotInterval:  DefaultRaftSnapshotIntvl,
 	}
 	var err error
+	if cfg.Standalone, err = cmd.Flags().GetBool("standalone"); err != nil {
+		return nil, fmt.Errorf("failed to parse standalone flag: %w", err)
+	}
 	if cfg.Host, err = cmd.Flags().GetString("host"); err != nil {
 		return nil, fmt.Errorf("failed to parse host flag: %w", err)
 	}
@@ -243,6 +249,12 @@ func (cfg *Config) Parse(cfgFile string) error {
 				}
 			} else if cfgName == "nodeid" {
 				cfg.NodeID = fields[1]
+			} else if cfgName == "standalone" {
+				v, parseErr := strconv.ParseBool(fields[1])
+				if parseErr != nil {
+					return parseErr
+				}
+				cfg.Standalone = v
 			} else if cfgName == "raftdir" {
 				cfg.RaftDir = fields[1]
 			} else if cfgName == "raftbind" {
@@ -299,6 +311,7 @@ func NewDefaultConfig() *Config {
 		LogSamplingThereafter: DefaultLogSamplingThereafter,
 		ShardNum:              DefaultShardNum,
 		NodeID:                DefaultNodeID,
+		Standalone:            false,
 		RaftDir:               DefaultRaftDir,
 		RaftBind:              DefaultRaftBind,
 		RaftHTTPAddr:          DefaultRaftHTTPAddr,

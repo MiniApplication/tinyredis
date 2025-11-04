@@ -47,15 +47,17 @@ func delKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 		logger.Error("delKey Function: cmdName is not del")
 		return RESP.MakeErrorData("Protocol error: command is not del")
 	}
-	if !m.CheckTTL(string(cmd[1])) {
-		return RESP.MakeIntData(int64(0))
-	}
 	dKeyCount := 0
 	for _, key := range cmd[1:] {
-		m.locks.Lock(string(key))
-		dKeyCount += m.db.Delete(string(key))
-		m.ttl.RemoveTTL(string(key))
-		m.locks.UnLock(string(key))
+		k := string(key)
+		if !m.CheckTTL(k) {
+			// key expired, treat as non-existent for deletion count
+			continue
+		}
+		m.locks.Lock(k)
+		dKeyCount += m.db.Delete(k)
+		m.ttl.RemoveTTL(k)
+		m.locks.UnLock(k)
 	}
 	return RESP.MakeIntData(int64(dKeyCount))
 }
@@ -234,8 +236,9 @@ func renameKey(m *MemDb, cmd [][]byte) RESP.RedisData {
 	if !m.CheckTTL(oldName) {
 		return RESP.MakeErrorData(fmt.Sprintf("error: %s not exist", oldName))
 	}
-	m.locks.RLockMulti([]string{oldName, newName})
-	defer m.locks.RUnLockMulti([]string{oldName, newName})
+	// 需要写入，使用写锁保护两个键，避免并发冲突
+	m.locks.LockMulti([]string{oldName, newName})
+	defer m.locks.UnLockMulti([]string{oldName, newName})
 	oldValue, ok := m.db.Get(oldName)
 	if !ok {
 		return RESP.MakeErrorData(fmt.Sprintf("error: %s not exist", oldName))

@@ -3,6 +3,7 @@ package util
 import (
 	"math"
 	"strconv"
+	"unsafe"
 
 	"github.com/spaolacci/murmur3"
 )
@@ -10,16 +11,19 @@ import (
 // HashKey hashes a string to an int value using MurmurHash3 algorithm
 func HashKey(key string) int {
 	const seed uint32 = 0x1234ABCD
-	hash := murmur3.Sum64WithSeed([]byte(key), seed)
 
-	hash ^= hash >> 33
-	hash *= 0xff51afd7ed558ccd
-	hash ^= hash >> 33
-
-	if strconv.IntSize == 32 {
-		return int(uint32(hash))
+	// Avoid allocating a []byte for the string.
+	var b []byte
+	if key != "" {
+		b = unsafe.Slice(unsafe.StringData(key), len(key))
 	}
-	return int(hash & math.MaxInt64)
+	h := murmur3.Sum64WithSeed(b, seed)
+
+	// Keep return semantics stable across 32/64-bit.
+	if strconv.IntSize == 32 {
+		return int(uint32(h))
+	}
+	return int(h & math.MaxInt64)
 }
 
 // PatternMatch matches a string with a wildcard pattern.

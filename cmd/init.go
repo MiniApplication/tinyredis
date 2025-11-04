@@ -100,6 +100,7 @@ func init() {
 
 func bindNodeFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&(config.Configures.ConfFile), "config", "c", "", "Appoint a config file: such as /etc/redis.conf")
+	cmd.Flags().BoolVar(&(config.Configures.Standalone), "standalone", false, "Run in standalone mode without Raft (no clustering)")
 	cmd.Flags().StringVarP(&(config.Configures.Host), "host", "H", config.DefaultHost, "Bind host ip: default is 127.0.0.1")
 	cmd.Flags().IntVarP(&(config.Configures.Port), "port", "p", config.DefaultPort, "Bind a listening port: default is 6379")
 	cmd.Flags().StringVarP(&(config.Configures.LogDir), "logdir", "d", config.DefaultLogDir, "Set log directory: default is /tmp")
@@ -125,6 +126,12 @@ func runNode(cmd *cobra.Command) error {
 	cfg, err := config.Setup(cmd)
 	if err != nil {
 		return err
+	}
+	// If a config file is specified, load and override defaults/flags accordingly.
+	if cfg.ConfFile != "" {
+		if err := cfg.Parse(cfg.ConfFile); err != nil {
+			return err
+		}
 	}
 	if err = logger.SetUp(cfg); err != nil {
 		return err

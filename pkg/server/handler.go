@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/hsn0918/tinyredis/pkg/RESP"
-	"github.com/hsn0918/tinyredis/pkg/cluster"
 	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
 type Handler struct {
-	node       *cluster.Node
+	node       ExecNode
 	sessionSeq atomic.Uint64
 }
 
-func NewHandler(node *cluster.Node) *Handler {
+func NewHandler(node ExecNode) *Handler {
 	return &Handler{node: node}
 }
 

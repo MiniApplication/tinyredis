@@ -3,7 +3,8 @@ SHELL := /bin/bash
 # --- Toolchain configuration -------------------------------------------------
 GO        ?= go
 GOFMT     ?= gofmt
-GOENV      = GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod
+GOEXPERIMENT ?= greenteagc
+GOENV      = GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod GOEXPERIMENT=$(GOEXPERIMENT)
 GOFLAGS   ?=
 MODULE_CACHE_SENTINEL := $(CURDIR)/.cache/go-mod/.synced
 
@@ -22,6 +23,7 @@ BENCH_FLAGS  ?= -run=^$$ -bench=.
 LINT_CMD     ?= golangci-lint
 LINT_ARGS    ?= run ./...
 LINT_VERSION ?= v1.61.0
+LINT_IMAGE   ?= golangci/golangci-lint:$(LINT_VERSION)
 
 # --- Docker settings ---------------------------------------------------------
 IMAGE     ?= tinyredis:latest
@@ -74,13 +76,23 @@ bench: ## Run benchmarks for the project
 test-leader-transfer: ## Run the Raft leader failover integration test
 	@$(GOENV) $(GO) test $(GOFLAGS) ./pkg/cluster -run TestLeaderFailoverTransfersLeadership -count=1
 
-.PHONY: lint
-lint: ## Run golangci-lint (installs if missing)
+.PHONY: lint-local
+lint-local: ## Run golangci-lint on host (uses .cache)
 	@if ! command -v $(LINT_CMD) >/dev/null 2>&1; then \
 		echo "Installing $(LINT_CMD) $(LINT_VERSION)"; \
 		$(GOENV) $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION); \
 	fi
 	@$(GOENV) $(LINT_CMD) $(LINT_ARGS)
+
+.PHONY: lint
+lint: ## Run golangci-lint inside Docker (no local .cache)
+	@docker run --rm \
+		-v $(CURDIR):/workspace \
+		-w /workspace \
+		-e GOCACHE=/tmp/gocache \
+		-e GOMODCACHE=/tmp/gomodcache \
+		$(LINT_IMAGE) \
+		$(LINT_CMD) $(LINT_ARGS)
 
 .PHONY: fmt
 fmt: ## Format Go source files in-place
@@ -104,7 +116,7 @@ vet: ## Run go vet on the codebase
 	@$(GOENV) $(GO) vet $(PKGS)
 
 .PHONY: ci
-ci: fmt-check lint test ## Run formatting check, lint, and tests
+ci: fmt-check lint test ## Run formatting check, lint (in Docker), and tests
 
 # --- Docker ------------------------------------------------------------------
 .PHONY: docker-build

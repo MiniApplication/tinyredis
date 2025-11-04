@@ -20,18 +20,17 @@ func NewLocks(size int) *Locks {
 	return &Locks{locks: locks}
 }
 func (l *Locks) GetKeyPos(key string) int {
-	if len(l.locks) == 0 {
-		// 防止除零错误
-		logger.Error("Locks array is empty, cannot get key position")
+	n := len(l.locks)
+	if n == 0 {
 		return -1
 	}
 
-	pos := util.HashKey(key)
-	if pos < 0 {
-		pos = -pos // 确保 pos 为正数
-	}
+	h := uint64(util.HashKey(key))
 
-	return pos % len(l.locks)
+	if n&(n-1) == 0 {
+		return int(h & uint64(n-1))
+	}
+	return int(h % uint64(n))
 }
 func (l *Locks) Lock(key string) {
 	pos := l.GetKeyPos(key)

@@ -1,7 +1,9 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 LABEL stage=gobuilder \
       maintainer=https://github.com/HSn0918/tinyredis
 
+ARG GOEXPERIMENT=greenteagc
+ENV GOEXPERIMENT=${GOEXPERIMENT}
 ENV CGO_ENABLED=0
 ENV GOPROXY=https://goproxy.cn,direct
 

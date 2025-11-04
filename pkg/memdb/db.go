@@ -125,37 +125,68 @@ func (tm *TTLManager) shardFor(key string) *ttlShard {
 }
 
 func (tm *TTLManager) cleanupLoop() {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	// 自适应清理：根据最近到期时间动态调整唤醒间隔
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
 
 	for {
 		select {
-		case <-ticker.C:
-			tm.cleanup()
+		case <-timer.C:
+			next := tm.cleanup()
+			// 计算下一次唤醒时间，范围 [10ms, 1s]
+			wait := time.Second
+			if next > 0 {
+				now := time.Now().Unix()
+				if next <= now {
+					wait = 10 * time.Millisecond
+				} else {
+					d := time.Duration(next-now) * time.Second
+					if d < 10*time.Millisecond {
+						d = 10 * time.Millisecond
+					}
+					if d > time.Second {
+						d = time.Second
+					}
+					wait = d
+				}
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(wait)
 		case <-tm.stopChan:
 			return
 		}
 	}
 }
 
-func (tm *TTLManager) cleanup() {
+// cleanup 清理过期键并返回所有分片中最早的下一个过期时间（unix 秒）。
+func (tm *TTLManager) cleanup() int64 {
 	now := time.Now().Unix()
+	var nextExpire int64 = 0
 	for _, shard := range tm.shards {
-		expired := shard.collectExpired(now)
+		expired, next := shard.collectExpiredAndNext(now)
 		for _, key := range expired {
 			tm.db.Delete(key)
 		}
+		if next > 0 && (nextExpire == 0 || next < nextExpire) {
+			nextExpire = next
+		}
 	}
+	return nextExpire
 }
 
-func (s *ttlShard) collectExpired(now int64) []string {
+func (s *ttlShard) collectExpiredAndNext(now int64) (expired []string, next int64) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	var expired []string
 	for s.heap.Len() > 0 {
 		item := s.heap[0]
 		if item.expireAt > now {
+			next = item.expireAt
 			break
 		}
 		popped := heap.Pop(&s.heap).(*TTLItem)
@@ -163,7 +194,10 @@ func (s *ttlShard) collectExpired(now int64) []string {
 		expired = append(expired, popped.key)
 		releaseTTLItem(popped)
 	}
-	return expired
+	if next == 0 && s.heap.Len() > 0 {
+		next = s.heap[0].expireAt
+	}
+	return
 }
 
 func (tm *TTLManager) SetTTL(key string, expireAt int64) {
@@ -172,8 +206,10 @@ func (tm *TTLManager) SetTTL(key string, expireAt int64) {
 	defer shard.lock.Unlock()
 
 	if item, exists := shard.keys[key]; exists {
-		item.expireAt = expireAt
-		heap.Fix(&shard.heap, item.index)
+		if item.expireAt != expireAt {
+			item.expireAt = expireAt
+			heap.Fix(&shard.heap, item.index)
+		}
 		return
 	}
 
@@ -226,7 +262,7 @@ func (tm *TTLManager) CheckTTL(key string) bool {
 	shard.lock.Unlock()
 
 	releaseTTLItem(removed)
-	tm.db.Delete(key)
+	// 从 TTL 索引移除，实际删除交由调用方或后台清理处理，避免重复删除与不必要的加锁
 	return false
 }
 
@@ -272,10 +308,11 @@ func (m *MemDb) ExecCommand(cmd [][]byte) RESP.RedisData {
 // Attention: Don't lock this function because it has called locks.Lock(key) for atomic deleting expired key.
 // Otherwise, it will cause a deadlock.
 func (m *MemDb) CheckTTL(key string) bool {
+	// 若过期则在本地删除键，保证后续读写看到一致的“已过期=不存在”语义。
 	if !m.ttl.CheckTTL(key) {
 		m.locks.Lock(key)
-		defer m.locks.UnLock(key)
 		m.db.Delete(key)
+		m.locks.UnLock(key)
 		return false
 	}
 	return true

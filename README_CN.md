@@ -18,7 +18,7 @@
 
 ## 环境要求
 
-- Go 1.23+
+- Go 1.25+
 - macOS / Linux（Windows 可通过 WSL2）
 - Docker（可选）
 
@@ -27,12 +27,12 @@
 ## 单节点启动
 
 ```bash
-# 克隆仓库并编译
+# 克隆仓库并编译（禁用 greentea GC）
 git clone https://github.com/HSn0918/tinyredis
 cd tinyredis
-make build
+GOEXPERIMENT=greenteagc make build
 
-# 启动单节点
+# 启动单个 Raft 节点
 ./bin/tinyredis node \
   --host 127.0.0.1 --port 6379 \
   --node-id node-1 \
@@ -49,6 +49,20 @@ redis-cli -p 6379 ping
 ```
 
 > 数据存储在内存中；Raft 状态保存在 `./data/node1/`。
+
+---
+
+## 独立模式（不使用 Raft）
+
+如果不需要集群或复制能力，可以使用独立模式启动：
+
+```bash
+./bin/tinyredis node \
+  --host 127.0.0.1 --port 6379 \
+  --standalone
+```
+
+独立模式下，写入直接作用于本地内存数据库，不进行选主与日志复制。
 
 ---
 
@@ -156,6 +170,7 @@ redis-cli -p 6379 ping
 | `--raft-http` | 接受 `join` 请求的 HTTP 地址。 |
 | `--raft-join` | 指定 leader 的 `host:port` 加入集群。 |
 | `--raft-bootstrap` | 初始化新集群（仅首次使用）。 |
+| `--standalone` | 启动为独立模式，不启用 Raft。 |
 | `--logdir` | JSON 日志输出目录。 |
 | `--loglevel` | `debug`/`info`/`warn`/`error`。 |
 | `--log-sampling` | 是否开启日志采样（默认开启）。 |
@@ -242,3 +257,10 @@ make fmt
 - 支持 RDB/AOF 导出。
 
 欢迎提交 Issue 与 PR！
+Docker 构建（Dockerfile 默认使用 `GOEXPERIMENT=greenteagc`）
+
+```bash
+docker build -t tinyredis:latest .
+# 或在构建时显式指定：
+docker build --build-arg GOEXPERIMENT=greenteagc -t tinyredis:latest .
+```

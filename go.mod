@@ -1,6 +1,6 @@
 module github.com/hsn0918/tinyredis
 
-go 1.23
+go 1.25
 
 require (
 	github.com/emirpasic/gods v1.18.1

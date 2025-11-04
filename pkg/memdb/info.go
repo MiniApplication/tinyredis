@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/hsn0918/tinyredis/pkg/RESP"
 	"github.com/hsn0918/tinyredis/pkg/logger"
@@ -67,7 +68,13 @@ func info(m *MemDb, cmd [][]byte) RESP.RedisData {
 		builder.WriteString(formatReplicationSection(m))
 	default:
 		builder.WriteString("# ")
-		builder.WriteString(strings.Title(section))
+		if section != "" {
+			r := []rune(section)
+			r[0] = unicode.ToTitle(r[0])
+			builder.WriteString(string(r))
+		} else {
+			builder.WriteString(section)
+		}
 		builder.WriteString("\n")
 		builder.WriteString(fmt.Sprintf("warning:section_%s_not_available\n", section))
 	}

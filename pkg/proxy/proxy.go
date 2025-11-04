@@ -81,10 +81,8 @@ func (p *Proxy) Run(ctx context.Context) error {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
+			// Deprecated Temporary(): prefer simple backoff on generic transient errors.
+			// For unexpected errors, return to surface the issue.
 			return fmt.Errorf("accept connection: %w", err)
 		}
 
