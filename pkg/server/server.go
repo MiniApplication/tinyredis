@@ -1,17 +1,25 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"net"
+	"os"
+	"os/signal"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/hsn0918/tinyredis/pkg/cluster"
 	"github.com/hsn0918/tinyredis/pkg/config"
 	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
-// Start starts a simple redis server
+// Start starts a tinyredis node with graceful shutdown support.
 func Start(cfg *config.Config) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	raftNode, err := cluster.NewNode(cfg)
 	if err != nil {
 		logger.Panic("failed to create raft node: ", err)
@@ -23,40 +31,50 @@ func Start(cfg *config.Config) error {
 		}
 	}()
 
-	listener, err := net.Listen("tcp", cfg.Host+":"+strconv.Itoa(cfg.Port))
+	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		logger.Panic(err)
 		return err
 	}
 	defer func() {
-		err := listener.Close()
-		if err != nil {
-			logger.Error(err)
+		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+			logger.Error("listener close error: ", closeErr)
 		}
 	}()
-	logger.Info("Server Listen at", cfg.Host+":"+strconv.Itoa(cfg.Port))
 
-	var sg sync.WaitGroup
-	handler := NewHandler(raftNode)
+	logger.Infof("server listening on %s", addr)
+
+	var (
+		wg      sync.WaitGroup
+		handler = NewHandler(raftNode)
+	)
+
+	go func() {
+		<-ctx.Done()
+		_ = listener.Close()
+	}()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			logger.Error(err.Error())
-			break
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				break
+			}
+			logger.Error("accept connection error: ", err)
+			continue
 		}
-		logger.Info(conn.RemoteAddr().String(), " connected")
-		sg.Add(1)
-		go func() {
-			defer sg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Panic("Recovered from panic in connection handler: ", r)
-				}
-			}()
-			handler.Handle(conn)
-		}()
 
+		wg.Add(1)
+		go func(c net.Conn) {
+			defer wg.Done()
+			if err := handler.Handle(ctx, c); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("connection error: ", err)
+			}
+		}(conn)
 	}
-	sg.Wait()
+
+	stop()
+	wg.Wait()
 	return nil
 }

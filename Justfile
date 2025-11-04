@@ -101,3 +101,17 @@ join \
 	  JOIN_RAFT={{raft}} \
 	  JOIN_HTTP={{http}} \
 	  JOIN_TARGET={{leader}}
+
+rejoin node host port raft http:
+	@make rejoin \
+	  REJOIN_NODE={{node}} \
+	  REJOIN_PORT={{port}} \
+	  REJOIN_RAFT={{raft}} \
+	  REJOIN_HTTP={{http}} \
+	  REJOIN_HOST={{host}}
+
+cluster-up:
+	@make cluster-up
+
+cluster-down:
+	@make cluster-down

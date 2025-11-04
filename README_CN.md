@@ -33,7 +33,7 @@ cd tinyredis
 make build
 
 # 启动单节点
-./bin/tinyredis \
+./bin/tinyredis node \
   --host 127.0.0.1 --port 6379 \
   --node-id node-1 \
   --raft-dir ./data/node1 \
@@ -57,7 +57,7 @@ redis-cli -p 6379 ping
 ### 1. 引导第一个节点
 
 ```bash
-./bin/tinyredis \
+./bin/tinyredis node \
   --host 127.0.0.1 --port 6379 \
   --node-id node-1 \
   --raft-dir ./data/node1 \
@@ -72,7 +72,7 @@ redis-cli -p 6379 ping
 每个新节点需要空的 `raft-dir`，并在启动时指定 `--raft-join` 指向 leader 的 HTTP 地址：
 
 ```bash
-./bin/tinyredis \
+./bin/tinyredis node \
   --host 127.0.0.1 --port 6380 \
   --node-id node-2 \
   --raft-dir ./data/node2 \
@@ -94,20 +94,54 @@ redis-cli -p 6379 ping
 - 为新节点准备独立目录。
 - 启动时使用 `--raft-join` 指向当前 leader。
 
-### 自动故障转移代理（实验特性）
+### 故障转移观察流程
 
-如果希望客户端始终连接当前的 leader，可运行内置的轻量级代理：
+1. 按上文的 `bootstrap` / `join` 命令启动三节点后，分别查看：
+   ```bash
+   redis-cli -p 6379 INFO replication
+   redis-cli -p 6380 INFO replication
+   redis-cli -p 6381 INFO replication
+   ```
+   只有一个节点会是 `role:master`，其他节点显示 `role:slave`，并指向同一个 `leader_id`。
+2. 在 leader 上写入数据：
+   ```bash
+   redis-cli -p 6379 SET failover demo
+   ```
+3. 使用 Ctrl+C 停掉 leader 进程，稍等几秒后，再次查看剩余节点的 `INFO replication`，会看到新的 leader 升任（`role:master`、`leader_id` 更新）。
+4. 在新 leader 上读取验证：
+   ```bash
+   redis-cli -p 6380 GET failover
+   ```
+5. 需要让旧节点重新上线时，保持原来的数据目录与 ID，不要再加 `--raft-join/--raft-bootstrap`：
+   ```bash
+   ./bin/tinyredis node --host 127.0.0.1 --port 6379 \
+     --node-id node-1 \
+     --raft-dir ./data/node1 \
+     --raft-bind 127.0.0.1:7000 \
+     --raft-http 127.0.0.1:17000
+   ```
+   也可以使用新的快捷命令：
+   ```bash
+   make rejoin REJOIN_NODE=node-1 REJOIN_PORT=6379 \
+     REJOIN_RAFT=127.0.0.1:7000 REJOIN_HTTP=127.0.0.1:17000 \
+     REJOIN_HOST=127.0.0.1
+   ```
+
+> `INFO replication` 输出提供 `role`、`leader_id`、`leader_raft_addr`、`known_peers` 等字段，便于脚本化探测当前 leader。
+
+> 小贴士：`make cluster-up` 可以一键拉起三节点开发集群（数据/日志位于 `.devcluster`），`make cluster-down` 可快速清理。
+
+### 统一代理入口
+
+如果希望客户端（例如 `redis-cli`）始终连接到一个固定地址，可使用内置代理：
 
 ```bash
-./bin/tinyredis failover-proxy \
+./bin/tinyredis proxy \
   --listen 127.0.0.1:7390 \
   --nodes 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
 ```
 
-代理会轮询指定节点，使用 `INFO replication` 判断谁是 leader，并把进入代理的连接转发到该节点。leader 发生切换时，代理会在下次连接建立时自动跳转。  
-（如果客户端本身支持自动重连，例如 `redis-cli` 默认行为，断开后会自动连回代理，从而连到新的 leader。）
-
-> 新版 `INFO replication` 会输出 `role`、`leader_id`、`leader_raft_addr`、`known_peers` 等字段，可用于快速定位 leader 与集群状态。
+代理会定期使用 `INFO replication` 探测 leader，并自动把进入代理的连接转发到当前 leader 的 RESP 端口；当 leader 发生切换时，新的连接将自动落到新的 leader。
 
 ---
 
@@ -126,7 +160,7 @@ redis-cli -p 6379 ping
 | `--loglevel` | `debug`/`info`/`warn`/`error`。 |
 | `--log-sampling` | 是否开启日志采样（默认开启）。 |
 
-使用 `./bin/tinyredis --help` 查看全部选项。
+使用 `./bin/tinyredis node --help` 查看全部选项。
 
 ---
 
@@ -139,7 +173,7 @@ docker run -d --rm \
   -p 6379:6379 \
   -v $PWD/data/node1:/data \
   tinyredis:latest \
-  ./tinyredis --host 0.0.0.0 --node-id node-1 \
+  ./tinyredis node --host 0.0.0.0 --node-id node-1 \
   --raft-dir /data --raft-bind 0.0.0.0:7000 --raft-http 0.0.0.0:17000 --raft-bootstrap
 ```
 

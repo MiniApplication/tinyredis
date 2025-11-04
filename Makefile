@@ -165,6 +165,79 @@ join: build ## Start a follower node and join an existing leader
 		--raft-http $(JOIN_HTTP) \
 		--raft-join $(JOIN_TARGET)
 
+.PHONY: rejoin
+rejoin: build ## Restart an existing node using its persisted Raft data
+	@if [ -z "$(REJOIN_NODE)" ] || [ -z "$(REJOIN_PORT)" ] || [ -z "$(REJOIN_RAFT)" ] || [ -z "$(REJOIN_HTTP)" ] || [ -z "$(REJOIN_HOST)" ]; then \
+		echo "Must provide REJOIN_NODE, REJOIN_PORT, REJOIN_RAFT, REJOIN_HTTP, and REJOIN_HOST (e.g. make rejoin REJOIN_NODE=node-2 ...)"; \
+		exit 1; \
+	fi
+	@REJOIN_DIR="$(CURDIR)/data/$(REJOIN_NODE)"; \
+	if [ ! -d "$$REJOIN_DIR" ]; then \
+		echo "Raft data directory $$REJOIN_DIR does not exist. Use 'make join' for first-time nodes."; \
+		exit 1; \
+	fi; \
+	$(BIN) \
+		--host $(REJOIN_HOST) --port $(REJOIN_PORT) \
+		--node-id $(REJOIN_NODE) \
+		--raft-dir "$$REJOIN_DIR" \
+		--raft-bind $(REJOIN_RAFT) \
+		--raft-http $(REJOIN_HTTP)
+
+CLUSTER_ROOT     ?= $(CURDIR)/.devcluster
+CLUSTER_LOG_DIR   = $(CLUSTER_ROOT)/logs
+CLUSTER_PID_DIR   = $(CLUSTER_ROOT)/pids
+CLUSTER_DATA_DIR  = $(CLUSTER_ROOT)/data
+
+.PHONY: cluster-up
+cluster-up: build ## Launch a local 3-node cluster (logs/PIDs in .devcluster)
+	@$(MAKE) --no-print-directory cluster-down >/dev/null 2>&1 || true
+	@rm -rf $(CLUSTER_ROOT)
+	@mkdir -p $(CLUSTER_LOG_DIR) $(CLUSTER_PID_DIR) \
+		$(CLUSTER_DATA_DIR)/node-1 \
+		$(CLUSTER_DATA_DIR)/node-2 \
+		$(CLUSTER_DATA_DIR)/node-3
+	@nohup $(BIN) \
+		--host 127.0.0.1 --port 6379 \
+		--node-id node-1 \
+		--raft-dir $(CLUSTER_DATA_DIR)/node-1 \
+		--raft-bind 127.0.0.1:7000 \
+		--raft-http 127.0.0.1:17000 \
+		--raft-bootstrap \
+		> $(CLUSTER_LOG_DIR)/node-1.log 2>&1 & echo $$! > $(CLUSTER_PID_DIR)/node-1.pid
+	@sleep 0.5
+	@nohup $(BIN) \
+		--host 127.0.0.1 --port 6380 \
+		--node-id node-2 \
+		--raft-dir $(CLUSTER_DATA_DIR)/node-2 \
+		--raft-bind 127.0.0.1:7001 \
+		--raft-http 127.0.0.1:17001 \
+		--raft-join 127.0.0.1:17000 \
+		> $(CLUSTER_LOG_DIR)/node-2.log 2>&1 & echo $$! > $(CLUSTER_PID_DIR)/node-2.pid
+	@sleep 0.5
+	@nohup $(BIN) \
+		--host 127.0.0.1 --port 6381 \
+		--node-id node-3 \
+		--raft-dir $(CLUSTER_DATA_DIR)/node-3 \
+		--raft-bind 127.0.0.1:7002 \
+		--raft-http 127.0.0.1:17002 \
+		--raft-join 127.0.0.1:17000 \
+		> $(CLUSTER_LOG_DIR)/node-3.log 2>&1 & echo $$! > $(CLUSTER_PID_DIR)/node-3.pid
+	@echo "Cluster started. Logs: $(CLUSTER_LOG_DIR)"
+
+.PHONY: cluster-down
+cluster-down: ## Stop the cluster started by make cluster-up
+	@set -e; \
+	if [ -d "$(CLUSTER_PID_DIR)" ]; then \
+		for pidfile in $(CLUSTER_PID_DIR)/*.pid; do \
+			[ -f "$$pidfile" ] || continue; \
+			pid=$$(cat "$$pidfile"); \
+			if kill $$pid >/dev/null 2>&1; then \
+				echo "Stopped $$(basename $$pidfile .pid) (pid=$$pid)"; \
+			fi; \
+		done; \
+	fi; \
+	rm -rf $(CLUSTER_ROOT)
+
 # --- Cleanup -----------------------------------------------------------------
 .PHONY: clean
 clean: ## Remove build artifacts

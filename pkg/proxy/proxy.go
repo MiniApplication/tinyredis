@@ -255,7 +255,7 @@ func (p *Proxy) normalize() {
 		p.RetryInterval = 500 * time.Millisecond
 	}
 	if p.Logger == nil {
-		p.Logger = log.New(os.Stdout, "[failover-proxy] ", log.LstdFlags)
+		p.Logger = log.New(os.Stdout, "[redis-proxy] ", log.LstdFlags)
 	}
 }
 

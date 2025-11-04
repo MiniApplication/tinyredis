@@ -33,7 +33,7 @@ cd tinyredis
 go build ./cmd/tinyredis
 
 # start a standalone node on 127.0.0.1:6379
-./tinyredis \
+./tinyredis node \
   --host 127.0.0.1 \
   --port 6379 \
   --node-id node-1 \
@@ -57,7 +57,7 @@ Data lives in memory, while Raft metadata is written to `./data/node1/`.
 
 1. **Bootstrap the first node**
    ```bash
-   ./tinyredis --node-id node-1 \
+   ./tinyredis node --node-id node-1 \
      --host 127.0.0.1 --port 6379 \
      --raft-dir ./data/node1 \
      --raft-bind 127.0.0.1:7000 \
@@ -69,7 +69,7 @@ Data lives in memory, while Raft metadata is written to `./data/node1/`.
 2. **Join additional nodes**
    Each new node needs an empty raft directory and `--raft-join` pointing to the leader’s HTTP address:
    ```bash
-   ./tinyredis --node-id node-2 \
+   ./tinyredis node --node-id node-2 \
      --host 127.0.0.1 --port 6380 \
      --raft-dir ./data/node2 \
      --raft-bind 127.0.0.1:7001 \
@@ -86,6 +86,8 @@ Data lives in memory, while Raft metadata is written to `./data/node1/`.
 4. **Adding a brand new node**
    - Create a fresh directory for its raft state.
    - Start with `--raft-join` pointed at the current leader.
+
+> Quick start: `make cluster-up` launches a preconfigured three-node cluster (logs/PIDs under `.devcluster`); `make cluster-down` stops it.
 
 ---
 
@@ -105,7 +107,7 @@ Data lives in memory, while Raft metadata is written to `./data/node1/`.
 | `--log-sampling` | Enable log sampling (default true). |
 | `--log-sampling-interval` | Sampling window (default 1s). |
 
-Run `./tinyredis --help` for the full list.
+Run `./tinyredis node --help` for the full list.
 
 ---
 
@@ -122,26 +124,59 @@ docker run -d --name tinyredis \
   -p 6379:6379 \
   -v $PWD/data/node1:/data \
   tinyredis:latest \
-  ./tinyredis --host 0.0.0.0 --node-id node-1 \
+  ./tinyredis node --host 0.0.0.0 --node-id node-1 \
   --raft-dir /data --raft-bind 0.0.0.0:7000 \
   --raft-http 0.0.0.0:17000 --raft-bootstrap
 ```
 
 For multi-node clusters you need multiple containers (or compose) with different node IDs, ports, and persistent volumes.
 
-### Automated Failover Proxy (Experimental)
+### Observing Failover Locally
 
-Need a stable endpoint regardless of who the Raft leader is? Start the built-in proxy:
+1. Start three nodes (see the `bootstrap`/`join` helpers above) and inspect each node:
+   ```bash
+   redis-cli -p 6379 INFO replication
+   redis-cli -p 6380 INFO replication
+   redis-cli -p 6381 INFO replication
+   ```
+   Exactly one node reports `role:master`; the others report `role:slave` and point to the same `leader_id`.
+2. Write a value against the leader:
+   ```bash
+   redis-cli -p 6379 SET failover demo
+   ```
+3. Press Ctrl+C in the leader’s terminal to stop it. After a few seconds, rerun `INFO replication` on the remaining nodes to see a new leader elected (`role:master`, updated `leader_id`).
+4. Read the value back from the new leader:
+   ```bash
+   redis-cli -p 6380 GET failover
+   ```
+5. When bringing the old node back, reuse its original configuration **without** `--raft-join`/`--raft-bootstrap`. For example:
+   ```bash
+   ./bin/tinyredis node --host 127.0.0.1 --port 6379 \
+     --node-id node-1 \
+     --raft-dir ./data/node1 \
+     --raft-bind 127.0.0.1:7000 \
+     --raft-http 127.0.0.1:17000
+   ```
+   You can also rely on the helper target:
+   ```bash
+   make rejoin REJOIN_NODE=node-1 REJOIN_PORT=6379 \
+     REJOIN_RAFT=127.0.0.1:7000 REJOIN_HTTP=127.0.0.1:17000 \
+     REJOIN_HOST=127.0.0.1
+   ```
+
+> `INFO replication` now includes `role`, `leader_id`, `leader_raft_addr`, and `known_peers`, making it easy to script health/leader checks.
+
+### Unified Proxy Endpoint
+
+Need a single stable RESP endpoint for tools like `redis-cli`? Run the built-in proxy:
 
 ```bash
-./bin/tinyredis failover-proxy \
+./bin/tinyredis proxy \
   --listen 127.0.0.1:7390 \
   --nodes 127.0.0.1:6379,127.0.0.1:6380,127.0.0.1:6381
 ```
 
-The proxy probes each RESP address with `INFO replication`, forwards connections to whoever is currently `role:master`, and refreshes the target whenever leadership changes. Clients such as `redis-cli` that reconnect on disconnect will automatically land on the new leader via the proxy.
-
-> `INFO replication` now surfaces details like `role`, `leader_id`, `leader_raft_addr`, and enumerates `known_peers`, which makes it easy to script discovery logic.
+The proxy probes each node with `INFO replication`, forwards incoming connections to the current leader, and redirects new connections automatically when leadership changes—no client reconfiguration required.
 
 ---
 
@@ -204,69 +239,3 @@ See the actual command registration under `pkg/memdb` for the authoritative list
 - Optional RDB/AOF export.
 
 Contributions & issues are welcome!
-|-- main.go
-|-- pkg
-`-- sh
-```
-
-### Second-level directories
-
-```bash
-.
-|-- Dockerfile
-|-- LICENSE
-|-- Makefile
-|-- README.md
-|-- cmd
-|   `-- init.go
-|-- go.mod
-|-- go.sum
-|-- main.go
-|-- pkg
-|   |-- RESP
-|   |   |-- arraydata.go
-|   |   |-- bulkdata.go
-|   |   |-- errordata.go
-|   |   |-- intdata.go
-|   |   |-- parser_test.go
-|   |   |-- parsestream.go
-|   |   |-- plaindata.go
-|   |   |-- stringdata.go
-|   |   `-- structure.go
-|   |-- config
-|   |   `-- config.go
-|   |-- logger
-|   |   |-- level.go
-|   |   `-- logger.go
-|   |-- memdb
-|   |   |-- command.go
-|   |   |-- concurrentmap.go
-|   |   |-- concurrentmap_test.go
-|   |   |-- db.go
-|   |   |-- dblock.go
-|   |   |-- hash.go
-|   |   |-- hash_struct.go
-|   |   |-- info.go
-|   |   |-- keys.go
-|   |   |-- keys_test.go
-|   |   |-- list.go
-|   |   |-- list_struct.go
-|   |   |-- list_test.go
-|   |   |-- set.go
-|   |   |-- set_struct.go
-|   |   |-- string.go
-|   |   |-- string_test.go
-|   |   |-- zset.go
-|   |   |-- zset_struct.go
-|   |   `-- zset_test.go
-|   |-- server
-|   |   |-- aof.go
-|   |   |-- handler.go
-|   |   `-- server.go
-|   `-- util
-|       `-- util.go
-`-- sh
-    `-- testAof
-```
-
----

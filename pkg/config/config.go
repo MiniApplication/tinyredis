@@ -95,9 +95,6 @@ func Setup(cmd *cobra.Command) (*Config, error) {
 		RaftSnapshotInterval:  DefaultRaftSnapshotIntvl,
 	}
 	var err error
-	if err = cmd.ParseFlags(os.Args[1:]); err != nil {
-		return nil, err
-	}
 	if cfg.Host, err = cmd.Flags().GetString("host"); err != nil {
 		return nil, fmt.Errorf("failed to parse host flag: %w", err)
 	}
@@ -296,7 +293,7 @@ func NewDefaultConfig() *Config {
 		Port:                  DefaultPort,
 		LogDir:                DefaultLogDir,
 		LogLevel:              DefaultLogLevel,
-		LogSamplingEnabled:    DefaultLogSamplingEnabled,
+		LogSamplingEnabled:    true,
 		LogSamplingInterval:   DefaultLogSamplingInterval,
 		LogSamplingInitial:    DefaultLogSamplingInitial,
 		LogSamplingThereafter: DefaultLogSamplingThereafter,

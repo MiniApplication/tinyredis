@@ -203,13 +203,31 @@ func convertAttrs(attrs []slog.Attr) []any {
 }
 
 func buildLogger(cfg *config.Config) (*slog.Logger, *os.File, error) {
+	nodeID := strings.TrimSpace(cfg.NodeID)
 	level := parseLevel(cfg.LogLevel)
-	opts := &slog.HandlerOptions{
+	textOpts := &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,
 	}
 
-	handlers := []slog.Handler{slog.NewTextHandler(os.Stdout, opts)}
+	if nodeID != "" {
+		textOpts.ReplaceAttr = func(groups []string, attr slog.Attr) slog.Attr {
+			if attr.Key == "node_id" {
+				return slog.Attr{}
+			}
+			if attr.Key == slog.MessageKey {
+				val := attr.Value.String()
+				if val == "" {
+					attr.Value = slog.StringValue("node=" + nodeID)
+				} else {
+					attr.Value = slog.StringValue("node=" + nodeID + " " + val)
+				}
+			}
+			return attr
+		}
+	}
+
+	handlers := []slog.Handler{slog.NewTextHandler(os.Stdout, textOpts)}
 
 	var file *os.File
 	if cfg.LogDir != "" {
@@ -222,7 +240,11 @@ func buildLogger(cfg *config.Config) (*slog.Logger, *os.File, error) {
 			return nil, nil, fmt.Errorf("failed to open log file: %w", err)
 		}
 		file = f
-		handlers = append(handlers, slog.NewJSONHandler(f, opts))
+		jsonOpts := &slog.HandlerOptions{
+			Level:     level,
+			AddSource: true,
+		}
+		handlers = append(handlers, slog.NewJSONHandler(f, jsonOpts))
 	}
 
 	handler := multiHandlerFrom(handlers)
@@ -232,8 +254,8 @@ func buildLogger(cfg *config.Config) (*slog.Logger, *os.File, error) {
 	}
 
 	logger := slog.New(handler)
-	if cfg != nil && strings.TrimSpace(cfg.NodeID) != "" {
-		logger = logger.With("node_id", strings.TrimSpace(cfg.NodeID))
+	if cfg != nil && nodeID != "" {
+		logger = logger.With("node_id", nodeID)
 	}
 	return logger, file, nil
 }

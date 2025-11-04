@@ -12,25 +12,26 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tiny-redis",
-	Short: "A tiny Redis server",
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg, err := config.Setup(cmd)
-		if err != nil {
-			fmt.Println(err.Error())
-			os.Exit(1)
+	Use:           "tinyredis",
+	Short:         "A tiny Redis toolkit",
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return runNode(cmd)
 		}
-		err = logger.SetUp(cfg)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		err = server.Start(cfg)
-		if err != nil {
-			os.Exit(1)
-		}
+		return cmd.Help()
 	},
 }
+
+var nodeCmd = &cobra.Command{
+	Use:   "node",
+	Short: "Run a tinyredis node",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runNode(cmd)
+	},
+}
+
 var completionCmd = &cobra.Command{
 	Use:   "completion",
 	Short: "Generate completion script",
@@ -83,26 +84,10 @@ $ tiny-redis completion fish > ~/.config/fish/completions/tiny-redis.fish
 
 func init() {
 	config.Configures = config.NewDefaultConfig()
-	rootCmd.Flags().StringVarP(&(config.Configures.ConfFile), "config", "c", "", "Appoint a config file: such as /etc/redis.conf")
-	rootCmd.Flags().StringVarP(&(config.Configures.Host), "host", "H", config.DefaultHost, "Bind host ip: default is 127.0.0.1")
-	rootCmd.Flags().IntVarP(&(config.Configures.Port), "port", "p", config.DefaultPort, "Bind a listening port: default is 6379")
-	rootCmd.Flags().StringVarP(&(config.Configures.LogDir), "logdir", "d", config.DefaultLogDir, "Set log directory: default is /tmp")
-	rootCmd.Flags().StringVarP(&(config.Configures.LogLevel), "loglevel", "l", config.DefaultLogLevel, "Set log level: default is info")
-	rootCmd.Flags().BoolVar(&(config.Configures.LogSamplingEnabled), "log-sampling", config.DefaultLogSamplingEnabled, "Enable log sampling to reduce duplicate entries")
-	rootCmd.Flags().DurationVar(&(config.Configures.LogSamplingInterval), "log-sampling-interval", config.DefaultLogSamplingInterval, "Log sampling interval window (e.g., 1s)")
-	rootCmd.Flags().IntVar(&(config.Configures.LogSamplingInitial), "log-sampling-initial", config.DefaultLogSamplingInitial, "Number of identical logs allowed within the sampling window before dropping")
-	rootCmd.Flags().IntVar(&(config.Configures.LogSamplingThereafter), "log-sampling-thereafter", config.DefaultLogSamplingThereafter, "Number of identical logs allowed after the initial burst within the sampling window")
-	rootCmd.Flags().IntVarP(&(config.Configures.ShardNum), "shardnum", "s", config.DefaultShardNum, "Set shard number: default is 1024")
-	rootCmd.Flags().StringVar(&(config.Configures.NodeID), "node-id", config.DefaultNodeID, "Unique Raft node identifier")
-	rootCmd.Flags().StringVar(&(config.Configures.RaftDir), "raft-dir", config.DefaultRaftDir, "Directory to store Raft state")
-	rootCmd.Flags().StringVar(&(config.Configures.RaftBind), "raft-bind", config.DefaultRaftBind, "Raft TCP bind address")
-	rootCmd.Flags().StringVar(&(config.Configures.RaftHTTPAddr), "raft-http", config.DefaultRaftHTTPAddr, "HTTP bind address for Raft join requests")
-	rootCmd.Flags().StringVar(&(config.Configures.JoinAddr), "raft-join", config.DefaultRaftJoinAddr, "Join address of an existing node (host:port)")
-	rootCmd.Flags().BoolVar(&(config.Configures.RaftBootstrap), "raft-bootstrap", false, "Bootstrap cluster with this node")
-	rootCmd.Flags().IntVar(&(config.Configures.RaftConnectionPool), "raft-pool", config.DefaultRaftConnectionPool, "Raft connection pool size")
-	rootCmd.Flags().DurationVar(&(config.Configures.RaftTimeout), "raft-timeout", config.DefaultRaftTimeout, "Raft network timeout (e.g., 10s)")
-	rootCmd.Flags().Uint64Var(&(config.Configures.RaftSnapshotThreshold), "raft-snap-threshold", uint64(config.DefaultRaftSnapshotThresh), "Snapshot after this many log entries")
-	rootCmd.Flags().DurationVar(&(config.Configures.RaftSnapshotInterval), "raft-snap-interval", config.DefaultRaftSnapshotIntvl, "Snapshot interval duration (e.g., 2m)")
+	bindNodeFlags(rootCmd)
+	bindNodeFlags(nodeCmd)
+
+	rootCmd.AddCommand(nodeCmd)
 	rootCmd.AddCommand(completionCmd)
 	memdb.RegisterKeyCommand()
 	memdb.RegisterStringCommands()
@@ -112,9 +97,44 @@ func init() {
 	memdb.RegisterZSetCommands()
 	memdb.RegisterInfoCommands()
 }
+
+func bindNodeFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&(config.Configures.ConfFile), "config", "c", "", "Appoint a config file: such as /etc/redis.conf")
+	cmd.Flags().StringVarP(&(config.Configures.Host), "host", "H", config.DefaultHost, "Bind host ip: default is 127.0.0.1")
+	cmd.Flags().IntVarP(&(config.Configures.Port), "port", "p", config.DefaultPort, "Bind a listening port: default is 6379")
+	cmd.Flags().StringVarP(&(config.Configures.LogDir), "logdir", "d", config.DefaultLogDir, "Set log directory: default is /tmp")
+	cmd.Flags().StringVarP(&(config.Configures.LogLevel), "loglevel", "l", config.DefaultLogLevel, "Set log level: default is info")
+	cmd.Flags().BoolVar(&(config.Configures.LogSamplingEnabled), "log-sampling", config.DefaultLogSamplingEnabled, "Enable log sampling to reduce duplicate entries")
+	cmd.Flags().DurationVar(&(config.Configures.LogSamplingInterval), "log-sampling-interval", config.DefaultLogSamplingInterval, "Log sampling interval window (e.g., 1s)")
+	cmd.Flags().IntVar(&(config.Configures.LogSamplingInitial), "log-sampling-initial", config.DefaultLogSamplingInitial, "Number of identical logs allowed within the sampling window before dropping")
+	cmd.Flags().IntVar(&(config.Configures.LogSamplingThereafter), "log-sampling-thereafter", config.DefaultLogSamplingThereafter, "Number of identical logs allowed after the initial burst within the sampling window")
+	cmd.Flags().IntVarP(&(config.Configures.ShardNum), "shardnum", "s", config.DefaultShardNum, "Set shard number: default is 1024")
+	cmd.Flags().StringVar(&(config.Configures.NodeID), "node-id", config.DefaultNodeID, "Unique Raft node identifier")
+	cmd.Flags().StringVar(&(config.Configures.RaftDir), "raft-dir", config.DefaultRaftDir, "Directory to store Raft state")
+	cmd.Flags().StringVar(&(config.Configures.RaftBind), "raft-bind", config.DefaultRaftBind, "Raft TCP bind address")
+	cmd.Flags().StringVar(&(config.Configures.RaftHTTPAddr), "raft-http", config.DefaultRaftHTTPAddr, "HTTP bind address for Raft join requests")
+	cmd.Flags().StringVar(&(config.Configures.JoinAddr), "raft-join", config.DefaultRaftJoinAddr, "Join address of an existing node (host:port)")
+	cmd.Flags().BoolVar(&(config.Configures.RaftBootstrap), "raft-bootstrap", false, "Bootstrap cluster with this node")
+	cmd.Flags().IntVar(&(config.Configures.RaftConnectionPool), "raft-pool", config.DefaultRaftConnectionPool, "Raft connection pool size")
+	cmd.Flags().DurationVar(&(config.Configures.RaftTimeout), "raft-timeout", config.DefaultRaftTimeout, "Raft network timeout (e.g., 10s)")
+	cmd.Flags().Uint64Var(&(config.Configures.RaftSnapshotThreshold), "raft-snap-threshold", uint64(config.DefaultRaftSnapshotThresh), "Snapshot after this many log entries")
+	cmd.Flags().DurationVar(&(config.Configures.RaftSnapshotInterval), "raft-snap-interval", config.DefaultRaftSnapshotIntvl, "Snapshot interval duration (e.g., 2m)")
+}
+
+func runNode(cmd *cobra.Command) error {
+	cfg, err := config.Setup(cmd)
+	if err != nil {
+		return err
+	}
+	if err = logger.SetUp(cfg); err != nil {
+		return err
+	}
+	return server.Start(cfg)
+}
+
 func Run() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
