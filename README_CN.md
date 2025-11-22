@@ -214,6 +214,8 @@ make fmt
 
 第一次运行 `make lint` 时会自动安装 `golangci-lint`。
 
+想要评估性能表现，可参考 [性能测试全流程教程](./docs/performance_tutorial_CN.md)。
+
 ---
 
 ## 常用命令支持

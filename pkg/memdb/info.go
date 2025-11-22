@@ -3,12 +3,15 @@ package memdb
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/hsn0918/tinyredis/pkg/RESP"
+	"github.com/hsn0918/tinyredis/pkg/config"
 	"github.com/hsn0918/tinyredis/pkg/logger"
 )
 
@@ -27,7 +30,39 @@ func client(m *MemDb, cmd [][]byte) RESP.RedisData {
 
 // config
 func infoConfig(m *MemDb, cmd [][]byte) RESP.RedisData {
-	return RESP.MakeBulkData([]byte("OK"))
+	if len(cmd) < 2 {
+		return RESP.MakeErrorData("ERR wrong number of arguments for 'config' command")
+	}
+
+	sub := strings.ToLower(string(cmd[1]))
+	switch sub {
+	case "get":
+		if len(cmd) != 3 {
+			return RESP.MakeErrorData("ERR wrong number of arguments for 'config get'")
+		}
+		pattern := strings.ToLower(string(cmd[2]))
+		pairs := configPairs(config.Configures)
+		resp := make([]RESP.RedisData, 0, len(pairs)*2)
+		for _, pair := range pairs {
+			if matchConfigPattern(pattern, pair.key) {
+				resp = append(resp, RESP.MakeBulkData([]byte(pair.key)))
+				resp = append(resp, RESP.MakeBulkData([]byte(pair.value)))
+			}
+		}
+		return RESP.MakeArrayData(resp)
+	case "set":
+		if len(cmd) != 4 {
+			return RESP.MakeErrorData("ERR wrong number of arguments for 'config set'")
+		}
+		return RESP.MakeStringData("OK")
+	case "resetstat":
+		if len(cmd) != 2 {
+			return RESP.MakeErrorData("ERR wrong number of arguments for 'config resetstat'")
+		}
+		return RESP.MakeStringData("OK")
+	default:
+		return RESP.MakeErrorData("ERR unsupported CONFIG subcommand")
+	}
 }
 
 // scan
@@ -124,4 +159,49 @@ func formatReplicationSection(m *MemDb) string {
 		builder.WriteString("\n")
 	}
 	return builder.String()
+}
+
+type configPair struct {
+	key   string
+	value string
+}
+
+func configPairs(cfg *config.Config) []configPair {
+	pairs := []configPair{
+		{key: "appendonly", value: "no"},
+		{key: "save", value: ""},
+		{key: "databases", value: "16"},
+		{key: "maxmemory", value: "0"},
+		{key: "maxclients", value: "4096"},
+	}
+
+	if cfg != nil {
+		pairs = append(pairs,
+			configPair{key: "bind", value: cfg.Host},
+			configPair{key: "port", value: strconv.Itoa(cfg.Port)},
+			configPair{key: "dir", value: cfg.LogDir},
+			configPair{key: "loglevel", value: cfg.LogLevel},
+			configPair{key: "node-id", value: cfg.NodeID},
+		)
+	} else {
+		pairs = append(pairs,
+			configPair{key: "bind", value: config.DefaultHost},
+			configPair{key: "port", value: strconv.Itoa(config.DefaultPort)},
+			configPair{key: "dir", value: config.DefaultLogDir},
+			configPair{key: "loglevel", value: config.DefaultLogLevel},
+			configPair{key: "node-id", value: config.DefaultNodeID},
+		)
+	}
+	return pairs
+}
+
+func matchConfigPattern(pattern, key string) bool {
+	if pattern == "*" {
+		return true
+	}
+	ok, err := filepath.Match(pattern, key)
+	if err != nil {
+		return key == pattern
+	}
+	return ok
 }

@@ -4,9 +4,8 @@ SHELL := /bin/bash
 GO        ?= go
 GOFMT     ?= gofmt
 GOEXPERIMENT ?= greenteagc
-GOENV      = GOCACHE=$(CURDIR)/.cache/go-build GOMODCACHE=$(CURDIR)/.cache/go-mod GOEXPERIMENT=$(GOEXPERIMENT)
 GOFLAGS   ?=
-MODULE_CACHE_SENTINEL := $(CURDIR)/.cache/go-mod/.synced
+export GOEXPERIMENT
 
 # --- Project layout ----------------------------------------------------------
 BINARY    := tinyredis
@@ -15,7 +14,7 @@ BUILD_DIR := bin
 BIN       := $(BUILD_DIR)/$(BINARY)
 PKGS      := ./...
 
-GOFILES := $(shell find . -name '*.go' -not -path './vendor/*' -not -path './.cache/*')
+GOFILES := $(shell find . -name '*.go' -not -path './vendor/*')
 
 # --- Quality tooling ---------------------------------------------------------
 GOTEST_FLAGS ?= -race -timeout 60s
@@ -41,15 +40,8 @@ help: ## Show this help
 build: ## Build the tinyredis binary
 	@rm -rf $(BUILD_DIR)
 	@mkdir -p $(BUILD_DIR)
-	@if [ ! -f $(MODULE_CACHE_SENTINEL) ]; then \
-		echo "==> priming Go module cache"; \
-		rm -rf $(CURDIR)/.cache/go-mod; \
-		mkdir -p $(CURDIR)/.cache/go-mod; \
-		cp -a $$HOME/go/pkg/mod/. $(CURDIR)/.cache/go-mod >/dev/null 2>&1 || true; \
-		touch $(MODULE_CACHE_SENTINEL); \
-	fi
 	@echo "==> building $(BIN)"
-	@$(GOENV) $(GO) build $(GOFLAGS) -o $(BIN) $(PKG_MAIN)
+	@$(GO) build $(GOFLAGS) -o $(BIN) $(PKG_MAIN)
 
 .PHONY: run
 run: build ## Run previously built binary
@@ -57,35 +49,35 @@ run: build ## Run previously built binary
 
 .PHONY: run-dev
 run-dev: ## Run tinyredis via go run (no build artifacts)
-	@$(GOENV) $(GO) run $(GOFLAGS) $(PKG_MAIN)
+	@$(GO) run $(GOFLAGS) $(PKG_MAIN)
 
 # --- Testing & Verification --------------------------------------------------
 .PHONY: test
 test: ## Run unit tests with race detector
-	@$(GOENV) $(GO) test $(GOFLAGS) $(GOTEST_FLAGS) $(PKGS)
+	@$(GO) test $(GOFLAGS) $(GOTEST_FLAGS) $(PKGS)
 
 .PHONY: test-short
 test-short: ## Run short tests without race detector
-	@$(GOENV) $(GO) test $(GOFLAGS) -short $(PKGS)
+	@$(GO) test $(GOFLAGS) -short $(PKGS)
 
 .PHONY: bench
 bench: ## Run benchmarks for the project
-	@$(GOENV) $(GO) test $(GOFLAGS) $(BENCH_FLAGS) $(PKGS)
+	@$(GO) test $(GOFLAGS) $(BENCH_FLAGS) $(PKGS)
 
 .PHONY: test-leader-transfer
 test-leader-transfer: ## Run the Raft leader failover integration test
-	@$(GOENV) $(GO) test $(GOFLAGS) ./pkg/cluster -run TestLeaderFailoverTransfersLeadership -count=1
+	@$(GO) test $(GOFLAGS) ./pkg/cluster -run TestLeaderFailoverTransfersLeadership -count=1
 
 .PHONY: lint-local
-lint-local: ## Run golangci-lint on host (uses .cache)
+lint-local: ## Run golangci-lint on host
 	@if ! command -v $(LINT_CMD) >/dev/null 2>&1; then \
 		echo "Installing $(LINT_CMD) $(LINT_VERSION)"; \
-		$(GOENV) $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION); \
+		$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINT_VERSION); \
 	fi
-	@$(GOENV) $(LINT_CMD) $(LINT_ARGS)
+	@$(LINT_CMD) $(LINT_ARGS)
 
 .PHONY: lint
-lint: ## Run golangci-lint inside Docker (no local .cache)
+lint: ## Run golangci-lint inside Docker
 	@docker run --rm \
 		-v $(CURDIR):/workspace \
 		-w /workspace \
@@ -109,11 +101,11 @@ fmt-check: ## Check that Go files are formatted
 
 .PHONY: tidy
 tidy: ## Run go mod tidy
-	@$(GOENV) $(GO) mod tidy
+	@$(GO) mod tidy
 
 .PHONY: vet
 vet: ## Run go vet on the codebase
-	@$(GOENV) $(GO) vet $(PKGS)
+	@$(GO) vet $(PKGS)
 
 .PHONY: ci
 ci: fmt-check lint test ## Run formatting check, lint (in Docker), and tests
@@ -255,9 +247,5 @@ cluster-down: ## Stop the cluster started by make cluster-up
 clean: ## Remove build artifacts
 	@rm -rf $(BUILD_DIR)
 
-.PHONY: clean-cache
-clean-cache: ## Remove Go build cache used by make
-	@rm -rf .cache
-
 .PHONY: clean-all
-clean-all: clean clean-cache ## Remove build artifacts and Go caches
+clean-all: clean ## Remove build artifacts and temporary files

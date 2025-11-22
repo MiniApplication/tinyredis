@@ -58,9 +58,6 @@ ci:
 clean:
 	@make clean
 
-clean-cache:
-	@make clean-cache
-
 clean-all:
 	@make clean-all
 
